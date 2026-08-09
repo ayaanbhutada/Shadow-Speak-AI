@@ -1,0 +1,6 @@
+{
+  "name": "Shadow Speak AI",
+  "description": "Real-time contextual AAC app empowering speech for ALS patients using ambient speech recognition, Gemini response predictions, and Web Speech or ElevenLabs text-to-speech.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
