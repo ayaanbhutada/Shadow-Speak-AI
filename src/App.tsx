@@ -4,11 +4,49 @@ import { TranscriptSection } from './components/TranscriptSection';
 import { PredictedResponses } from './components/PredictedResponses';
 import { QuickNeedsSection } from './components/QuickNeedsSection';
 import { ReadyToSpeakBar } from './components/ReadyToSpeakBar';
-import { SettingsModal } from './components/SettingsModal';
+import { SettingsPage } from './components/SettingsPage';
 import { DetailsModal } from './components/DetailsModal';
-import { UserProfile, PredictedResponse, QuickNeed, VoiceEngineConfig } from './types';
+import { LandingPage } from './components/LandingPage';
+import { CommunicationStylePage } from './components/CommunicationStylePage';
+import { UserProfile, PredictedResponse, QuickNeed, VoiceEngineConfig, AIModelConfig } from './types';
 import { SpeechSynthesisService } from './lib/speechServices';
 import { SIMULATED_SCENARIOS } from './data/quickNeeds';
+
+const DEFAULT_PROFILES: UserProfile[] = [
+  {
+    name: 'Alex Morgan',
+    caregiverContext: 'Spouse Sarah & Nurse Maria',
+    tone: 'Warm & Natural',
+    relationships: 'Family, healthcare providers, friends',
+    conditionNotes: 'ALS speech impairment - clear cognition',
+    language: 'English',
+    communicationAnswers: { 1: [1, 2], 2: [1, 3], 3: [1, 8], 4: [1, 2], 5: [1, 3], 6: [1, 3], 7: [1, 2], 8: [1, 5], 9: [1, 9], 10: [1, 2] },
+    communicationStyleSummary: 'Hydration: [Short & Polite, Gentle & Specific] • Small Talk: [Enthusiastic, Casual Update] • Health: [Upbeat & Positive, Warm & Grateful] • Activity: [Outdoor Fresh Air, Shared Entertainment] • Departure: [Warm Gratitude, Safety Check] • Food: [Gentle Soup / Warm, Comfort Food] • Comfort: [Comfortable, Head Elevation] • Social: [Social & Engaged, Music Company] • Meds: [Routine Confirmed, Stable & Comfort] • Weekend: [Scenic Outing, Cozy Home]',
+    communicationStyleTraits: ['Short & Polite', 'Gentle & Specific', 'Enthusiastic', 'Casual Update', 'Upbeat & Positive', 'Warm & Grateful', 'Outdoor Fresh Air', 'Shared Entertainment', 'Warm Gratitude', 'Safety Check', 'Gentle Soup / Warm', 'Comfort Food', 'Comfortable', 'Head Elevation', 'Social & Engaged', 'Music Company', 'Routine Confirmed', 'Stable & Comfort', 'Scenic Outing', 'Cozy Home'],
+  },
+  {
+    name: 'Priya Sharma',
+    caregiverContext: 'Son Rahul & Caregiver Rita',
+    tone: 'Direct & Concise',
+    relationships: 'Family, doctors, relatives',
+    conditionNotes: 'Prefers Hinglish responses and clear boundaries',
+    language: 'Hinglish',
+    communicationAnswers: { 1: [6, 1], 2: [5, 1], 3: [4, 1], 4: [4, 6], 5: [4, 1], 6: [8, 3], 7: [4, 3], 8: [4, 5], 9: [3, 1], 10: [3, 1] },
+    communicationStyleSummary: 'Hydration: [Hinglish Blend, Short & Polite] • Small Talk: [Hinglish Banter, Enthusiastic] • Health: [Hinglish Baseline, Upbeat & Positive] • Activity: [Hinglish Walk, Audio Relaxation] • Departure: [Hinglish Farewell, Warm Gratitude] • Food: [Hinglish Meal, Dal Khichdi] • Comfort: [Hinglish Shift, Cushion Adjust] • Social: [Hinglish Rest, Music Company] • Meds: [Hinglish Routine, Routine Confirmed] • Weekend: [Hinglish Gathering, Scenic Outing]',
+    communicationStyleTraits: ['Hinglish Blend', 'Hinglish Banter', 'Hinglish Baseline', 'Hinglish Walk', 'Hinglish Farewell', 'Hinglish Meal', 'Dal Khichdi', 'Hinglish Shift', 'Hinglish Rest', 'Hinglish Routine', 'Hinglish Gathering'],
+  },
+  {
+    name: 'David Chen',
+    caregiverContext: 'Daughter Emma & Physical Therapist Mark',
+    tone: 'Formal & Polite',
+    relationships: 'Healthcare team, colleagues, family',
+    conditionNotes: 'Requires formal tone for medical consultations',
+    language: 'English',
+    communicationAnswers: { 1: [2, 5], 2: [2, 4], 3: [2, 9], 4: [6, 9], 5: [3, 8], 6: [7, 5], 7: [8, 2], 8: [3, 9], 9: [5, 7], 10: [9, 6] },
+    communicationStyleSummary: 'Hydration: [Gentle & Specific, Polite Refusal] • Small Talk: [Direct & Honest, Polite Question] • Health: [Balanced Realist, Caregiver Redirect] • Activity: [Audio Relaxation, Routine Compliance] • Departure: [Safety Check, Direct Command] • Food: [Dietary Guidance, Smoothie / Protein] • Comfort: [Physio Review, Head Elevation] • Social: [Quiet Presence, Independent Focus] • Meds: [Safety Verification, Informed Partner] • Weekend: [Transport Logistics, Adaptive Energy]',
+    communicationStyleTraits: ['Gentle & Specific', 'Direct & Honest', 'Balanced Realist', 'Audio Relaxation', 'Safety Check', 'Dietary Guidance', 'Physio Review', 'Quiet Presence', 'Safety Verification', 'Transport Logistics'],
+  },
+];
 
 const DEFAULT_VOICE_CONFIG: VoiceEngineConfig = {
   engine: 'web-speech',
@@ -27,10 +65,37 @@ const DEFAULT_USER_PROFILE: UserProfile = {
   tone: 'Warm & Natural',
   relationships: 'Family, healthcare providers, friends',
   conditionNotes: 'ALS speech impairment - clear cognition',
+  language: 'English',
+  communicationAnswers: { 1: [1, 2], 2: [1, 3], 3: [1, 8], 4: [1, 2], 5: [1, 3], 6: [1, 3], 7: [1, 2], 8: [1, 5], 9: [1, 9], 10: [1, 2] },
+  communicationStyleSummary: 'Hydration: [Short & Polite, Gentle & Specific] • Small Talk: [Enthusiastic, Casual Update] • Health: [Upbeat & Positive, Warm & Grateful] • Activity: [Outdoor Fresh Air, Shared Entertainment] • Departure: [Warm Gratitude, Safety Check] • Food: [Gentle Soup / Warm, Comfort Food] • Comfort: [Comfortable, Head Elevation] • Social: [Social & Engaged, Music Company] • Meds: [Routine Confirmed, Stable & Comfort] • Weekend: [Scenic Outing, Cozy Home]',
+  communicationStyleTraits: ['Short & Polite', 'Gentle & Specific', 'Enthusiastic', 'Casual Update', 'Upbeat & Positive', 'Warm & Grateful', 'Outdoor Fresh Air', 'Shared Entertainment', 'Warm Gratitude', 'Safety Check', 'Gentle Soup / Warm', 'Comfort Food', 'Comfortable', 'Head Elevation', 'Social & Engaged', 'Music Company', 'Routine Confirmed', 'Stable & Comfort', 'Scenic Outing', 'Cozy Home'],
+};
+
+const DEFAULT_AI_MODEL_CONFIG: AIModelConfig = {
+  provider: 'gemini',
+  modelId: 'gemini-3.6-flash',
+  groqApiKey: '',
 };
 
 export default function App() {
-  // Voice & Profile Config with LocalStorage persistence
+  // Navigation View State ('landing' | 'dashboard' | 'settings' | 'style-questionnaire')
+  const [currentView, setCurrentView] = useState<'landing' | 'dashboard' | 'settings' | 'style-questionnaire'>('landing');
+
+  // Profiles List Persistence
+  const [profiles, setProfiles] = useState<UserProfile[]>(() => {
+    try {
+      const saved = localStorage.getItem('shadow_speak_profiles_list');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+      return DEFAULT_PROFILES;
+    } catch {
+      return DEFAULT_PROFILES;
+    }
+  });
+
+  // Voice, Profile & AI Model Config with LocalStorage persistence
   const [voiceConfig, setVoiceConfig] = useState<VoiceEngineConfig>(() => {
     try {
       const saved = localStorage.getItem('shadow_speak_voice_config');
@@ -43,9 +108,18 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     try {
       const saved = localStorage.getItem('shadow_speak_user_profile');
-      return saved ? JSON.parse(saved) : DEFAULT_USER_PROFILE;
+      return saved ? JSON.parse(saved) : DEFAULT_PROFILES[0];
     } catch {
-      return DEFAULT_USER_PROFILE;
+      return DEFAULT_PROFILES[0];
+    }
+  });
+
+  const [aiModelConfig, setAiModelConfig] = useState<AIModelConfig>(() => {
+    try {
+      const saved = localStorage.getItem('shadow_speak_ai_model_config');
+      return saved ? JSON.parse(saved) : DEFAULT_AI_MODEL_CONFIG;
+    } catch {
+      return DEFAULT_AI_MODEL_CONFIG;
     }
   });
 
@@ -71,15 +145,37 @@ export default function App() {
   const [readyText, setReadyText] = useState<string>('Pizza sounds great!');
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
 
-  // UI Modals & Settings
-  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  // UI State
   const [detailModalResponse, setDetailModalResponse] = useState<PredictedResponse | null>(null);
-  const [isEyeGazeMode, setIsEyeGazeMode] = useState<boolean>(false);
+  const [isEyeGazeMode, setIsEyeGazeMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('shadow_speak_eye_gaze_mode');
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch {
+      return true;
+    }
+  });
 
   // Web Speech Recognition Ref
   const recognitionRef = useRef<any>(null);
 
-  // Save Config to LocalStorage
+  // Save Config and Profiles to LocalStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('shadow_speak_eye_gaze_mode', JSON.stringify(isEyeGazeMode));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [isEyeGazeMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('shadow_speak_profiles_list', JSON.stringify(profiles));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [profiles]);
+
   useEffect(() => {
     try {
       localStorage.setItem('shadow_speak_voice_config', JSON.stringify(voiceConfig));
@@ -96,7 +192,31 @@ export default function App() {
     }
   }, [userProfile]);
 
-  // Function to fetch AI predicted responses from server Gemini API
+  // Profile Action Handlers
+  const handleSelectProfile = (selectedProf: UserProfile) => {
+    setUserProfile(selectedProf);
+    setCurrentView('dashboard');
+  };
+
+  const handleCreateProfile = (newProf: UserProfile) => {
+    setProfiles((prev) => [newProf, ...prev]);
+    setUserProfile(newProf);
+    setCurrentView('dashboard');
+  };
+
+  const handleDeleteProfile = (profName: string) => {
+    setProfiles((prev) => prev.filter((p) => p.name !== profName));
+  };
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('shadow_speak_ai_model_config', JSON.stringify(aiModelConfig));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [aiModelConfig]);
+
+  // Function to fetch AI predicted responses from server Gemini / Groq API
   const fetchAIPredictions = useCallback(
     async (currentTranscript: string, currentSpeakerName?: string) => {
       setIsLoadingPredictions(true);
@@ -109,6 +229,7 @@ export default function App() {
             userProfile,
             currentSpeaker: currentSpeakerName || speaker,
             count: 4,
+            aiModelConfig,
           }),
         });
 
@@ -127,7 +248,7 @@ export default function App() {
         setIsLoadingPredictions(false);
       }
     },
-    [userProfile, speaker]
+    [userProfile, speaker, aiModelConfig]
   );
 
   // Speech Recognition (ASR) setup using Web Speech API
@@ -267,6 +388,7 @@ export default function App() {
         if (responses[index]) {
           e.preventDefault();
           handleSelectResponse(responses[index]);
+          handleSpeak(responses[index].text);
         }
       } else if (e.key === 'Enter') {
         e.preventDefault();
@@ -281,16 +403,72 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [responses, readyText, voiceConfig]);
 
-  // Cycle scenario helper for header button
-  const handleCycleScenario = () => {
-    const randomIdx = Math.floor(Math.random() * SIMULATED_SCENARIOS.length);
-    const scen = SIMULATED_SCENARIOS[randomIdx];
-    handleUpdateTranscript(scen.text, scen.speaker);
+  const handleSaveProfileWithStyle = (updatedProf: UserProfile) => {
+    setUserProfile(updatedProf);
+    try {
+      localStorage.setItem('shadow_speak_user_profile', JSON.stringify(updatedProf));
+    } catch (e) {
+      console.error(e);
+    }
+
+    setProfiles((prev) => {
+      const idx = prev.findIndex((p) => p.name === updatedProf.name);
+      if (idx !== -1) {
+        const next = [...prev];
+        next[idx] = updatedProf;
+        return next;
+      }
+      return [...prev, updatedProf];
+    });
+
+    if (currentView === 'dashboard') {
+      fetchAIPredictions(transcript, speaker);
+    }
   };
 
   const isElevenLabsActive =
     voiceConfig.engine === 'elevenlabs' &&
     !!(voiceConfig.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY);
+
+  if (currentView === 'landing') {
+    return (
+      <LandingPage
+        profiles={profiles}
+        activeProfile={userProfile}
+        onSelectProfile={handleSelectProfile}
+        onCreateProfile={handleCreateProfile}
+        onDeleteProfile={handleDeleteProfile}
+        onOpenStyleAssessment={() => setCurrentView('style-questionnaire')}
+      />
+    );
+  }
+
+  if (currentView === 'settings') {
+    return (
+      <SettingsPage
+        onBack={() => setCurrentView('dashboard')}
+        voiceConfig={voiceConfig}
+        onSaveVoiceConfig={setVoiceConfig}
+        userProfile={userProfile}
+        onSaveUserProfile={setUserProfile}
+        aiModelConfig={aiModelConfig}
+        onSaveAIModelConfig={setAiModelConfig}
+        isEyeGazeMode={isEyeGazeMode}
+        onToggleEyeGaze={() => setIsEyeGazeMode(!isEyeGazeMode)}
+        onOpenStyleAssessment={() => setCurrentView('style-questionnaire')}
+      />
+    );
+  }
+
+  if (currentView === 'style-questionnaire') {
+    return (
+      <CommunicationStylePage
+        onBack={() => setCurrentView('dashboard')}
+        userProfile={userProfile}
+        onSaveProfile={handleSaveProfileWithStyle}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col justify-between selection:bg-cyan-500 selection:text-slate-950">
@@ -299,14 +477,14 @@ export default function App() {
         isListening={isListening}
         onToggleListening={handleToggleListening}
         voiceConfig={voiceConfig}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onSelectScenario={handleCycleScenario}
-        isEyeGazeMode={isEyeGazeMode}
-        onToggleEyeGaze={() => setIsEyeGazeMode(!isEyeGazeMode)}
+        onOpenSettings={() => setCurrentView('settings')}
+        activeProfileName={userProfile.name}
+        onOpenLanding={() => setCurrentView('landing')}
+        onOpenStyleAssessment={() => setCurrentView('style-questionnaire')}
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-5">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-3.5 sm:p-5 space-y-3.5 sm:space-y-4">
         {/* Section 1: Live Conversation Transcript (ASR) */}
         <TranscriptSection
           transcript={transcript}
@@ -327,9 +505,17 @@ export default function App() {
             handleSelectResponse(resp);
             handleSpeak(resp.text);
           }}
+          onSpeakText={(text) => {
+            setReadyText(text);
+            handleSpeak(text);
+          }}
+          onPrepareText={(text) => {
+            setReadyText(text);
+          }}
           onOpenDetails={(resp) => setDetailModalResponse(resp)}
           isLoading={isLoadingPredictions}
           isEyeGazeMode={isEyeGazeMode}
+          userProfile={userProfile}
         />
 
         {/* Section 3: Quick Essential Needs (High Priority 1-Tap) */}
@@ -357,19 +543,13 @@ export default function App() {
         }}
       />
 
-      {/* Modals */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        voiceConfig={voiceConfig}
-        onSaveVoiceConfig={setVoiceConfig}
-        userProfile={userProfile}
-        onSaveUserProfile={setUserProfile}
-      />
-
+      {/* In-context Details Modal for fine-tuning a specific predicted response */}
       <DetailsModal
         response={detailModalResponse}
         onClose={() => setDetailModalResponse(null)}
+        userProfile={userProfile}
+        aiModelConfig={aiModelConfig}
+        transcript={typeof transcript === 'string' ? transcript : Array.isArray(transcript) ? (transcript as any[]).map((t) => `${t.speaker || ''}: ${t.text || t}`).join('\n') : ''}
         onSpeakText={(text) => {
           setReadyText(text);
           handleSpeak(text);

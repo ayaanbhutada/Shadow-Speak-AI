@@ -24,6 +24,20 @@ export const QUICK_NEEDS: QuickNeed[] = [
     isUrgent: true
   },
   {
+    id: 'need-refuse',
+    label: 'No / Disagree',
+    phrase: 'No, I disagree with that and would prefer not to.',
+    icon: 'ThumbsDown',
+    color: 'bg-amber-950/90 border-amber-600 text-amber-200 hover:bg-amber-900 shadow-md'
+  },
+  {
+    id: 'need-dislike',
+    label: 'Don\'t Like This',
+    phrase: 'I don\'t like this at all, please stop or change it.',
+    icon: 'XCircle',
+    color: 'bg-rose-950/90 border-rose-700 text-rose-200 hover:bg-rose-900'
+  },
+  {
     id: 'need-adjust',
     label: 'Adjust Position',
     phrase: 'Could you please help adjust my seating or lying position?',

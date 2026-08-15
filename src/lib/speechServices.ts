@@ -2,6 +2,53 @@ import { VoiceEngineConfig } from '../types';
 
 export class SpeechSynthesisService {
   private static audioObj: HTMLAudioElement | null = null;
+  private static audioCtx: AudioContext | null = null;
+
+  /**
+   * Generates a direct Web Audio API tone chime to test hardware speakers
+   */
+  static async playTestTone(volume: number = 0.8): Promise<void> {
+    try {
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtxClass) return;
+
+      if (!this.audioCtx) {
+        this.audioCtx = new AudioCtxClass();
+      }
+
+      if (this.audioCtx.state === 'suspended') {
+        await this.audioCtx.resume();
+      }
+
+      const now = this.audioCtx.currentTime;
+
+      // Note 1: C5 (523.25 Hz)
+      const osc1 = this.audioCtx.createOscillator();
+      const gain1 = this.audioCtx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(523.25, now);
+      gain1.gain.setValueAtTime(volume * 0.3, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      osc1.connect(gain1);
+      gain1.connect(this.audioCtx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.3);
+
+      // Note 2: E5 (659.25 Hz)
+      const osc2 = this.audioCtx.createOscillator();
+      const gain2 = this.audioCtx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(659.25, now + 0.15);
+      gain2.gain.setValueAtTime(volume * 0.3, now + 0.15);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+      osc2.connect(gain2);
+      gain2.connect(this.audioCtx.destination);
+      osc2.start(now + 0.15);
+      osc2.stop(now + 0.45);
+    } catch (e) {
+      console.warn('Web Audio test tone error:', e);
+    }
+  }
 
   static getAvailableWebVoices(): SpeechSynthesisVoice[] {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
@@ -20,6 +67,11 @@ export class SpeechSynthesisService {
     return new Promise(async (resolve, reject) => {
       // Stop any active audio / speech
       this.stop();
+
+      // Play subtle chime if enabled or to wake audio hardware
+      if (config.volume > 0) {
+        this.playTestTone(Math.min(config.volume, 0.2));
+      }
 
       if (config.engine === 'elevenlabs' && (config.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY)) {
         try {
@@ -89,28 +141,62 @@ export class SpeechSynthesisService {
         return;
       }
 
+      // Unstick Web Speech synthesis queue if paused
+      try {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+        window.speechSynthesis.cancel();
+      } catch (e) {
+        console.warn('Failed to reset speechSynthesis state:', e);
+      }
+
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = config.rate || 1.0;
       utterance.pitch = config.pitch || 1.0;
       utterance.volume = config.volume ?? 1.0;
 
       const voices = window.speechSynthesis.getVoices();
-      if (config.webSpeechVoiceName) {
+
+      // Check if text contains Devanagari script (Hindi / Hinglish)
+      const hasDevanagari = /[\u0900-\u097F]/.test(text);
+      if (hasDevanagari) {
+        utterance.lang = 'hi-IN';
+        const hindiVoice = voices.find((v) => v.lang.includes('hi') || v.name.toLowerCase().includes('hindi'));
+        if (hindiVoice) {
+          utterance.voice = hindiVoice;
+        }
+      } else if (config.webSpeechVoiceName) {
         const found = voices.find((v) => v.name === config.webSpeechVoiceName);
         if (found) {
           utterance.voice = found;
         }
       }
 
-      utterance.onstart = () => onStart?.();
+      let timeoutId: any = null;
+
+      utterance.onstart = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        onStart?.();
+      };
+
       utterance.onend = () => {
+        if (timeoutId) clearTimeout(timeoutId);
         onEnd?.();
         resolve();
       };
+
       utterance.onerror = (e) => {
+        if (timeoutId) clearTimeout(timeoutId);
         onError?.(e);
         resolve();
       };
+
+      // Fallback timeout in case onstart/onend events are swallowed by browser
+      timeoutId = setTimeout(() => {
+        onEnd?.();
+        resolve();
+      }, Math.max(3000, text.length * 150));
 
       window.speechSynthesis.speak(utterance);
     });
@@ -118,7 +204,11 @@ export class SpeechSynthesisService {
 
   static stop() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {
+        console.warn(e);
+      }
     }
     if (this.audioObj) {
       this.audioObj.pause();
@@ -127,3 +217,4 @@ export class SpeechSynthesisService {
     }
   }
 }
+

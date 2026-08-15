@@ -4,6 +4,10 @@ export interface UserProfile {
   tone: 'Warm & Natural' | 'Direct & Concise' | 'Enthusiastic' | 'Formal & Polite';
   relationships: string;
   conditionNotes: string;
+  language?: 'English' | 'Hindi' | 'Hinglish';
+  communicationAnswers?: Record<number, number[] | number>;
+  communicationStyleSummary?: string;
+  communicationStyleTraits?: string[];
 }
 
 export interface PredictedResponse {
@@ -55,3 +59,10 @@ export interface SimulatedScenario {
   text: string;
   icon: string;
 }
+
+export interface AIModelConfig {
+  provider: 'gemini' | 'groq';
+  modelId: string;
+  groqApiKey: string;
+}
+
