@@ -121,6 +121,8 @@ Each response MUST have:
     const hasGroqKey = Boolean(userGroqKey || process.env.GROQ_API_KEY);
     const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
 
+    const resolvedGroqModel = (modelId && modelId.startsWith('llama')) ? modelId : (provider === 'groq' ? (modelId && modelId.startsWith('gemini') ? 'llama-3.3-70b-versatile' : modelId || 'llama-3.3-70b-versatile') : 'llama-3.3-70b-versatile');
+
     // 2A. Groq AI Handler
     if (provider === 'groq' || modelId.startsWith('llama') || (!hasGeminiKey && hasGroqKey)) {
       const groqKey = userGroqKey || process.env.GROQ_API_KEY;
@@ -139,7 +141,7 @@ Each response MUST have:
               "Content-Type": "application/json"
             },
             body: JSON.stringify({
-              model: modelId || "llama-3.3-70b-versatile",
+              model: resolvedGroqModel,
               messages: [
                 {
                   role: "system",
@@ -316,6 +318,8 @@ Return strictly valid JSON format:
     const hasGroqKey = Boolean(userGroqKey || process.env.GROQ_API_KEY);
     const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
 
+    const resolvedGroqExpansionModel = (modelId && modelId.startsWith('llama')) ? modelId : (provider === 'groq' ? (modelId && modelId.startsWith('gemini') ? 'llama-3.3-70b-versatile' : modelId || 'llama-3.3-70b-versatile') : 'llama-3.3-70b-versatile');
+
     // Groq Expansion
     if (provider === 'groq' || modelId.startsWith('llama') || (!hasGeminiKey && hasGroqKey)) {
       const groqKey = userGroqKey || process.env.GROQ_API_KEY;
@@ -327,7 +331,7 @@ Return strictly valid JSON format:
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            model: modelId || "llama-3.3-70b-versatile",
+            model: resolvedGroqExpansionModel,
             messages: [{ role: "user", content: expandPrompt }],
             response_format: { type: "json_object" },
             temperature: 0.7
