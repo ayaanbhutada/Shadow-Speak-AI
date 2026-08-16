@@ -118,13 +118,16 @@ Each response MUST have:
 - tag: A short category pill label (under 3 words, in target language script, e.g. "Affirmation", "Negative / Refusal", "Alternative", "Follow-up", "Boundary", "Energy / Rest").
 - details: A MANDATORY rich, fully detailed expanded statement providing full context, rationale, or boundary setting (20-35 words, in target language script).`;
 
+    const hasGroqKey = Boolean(userGroqKey || process.env.GROQ_API_KEY);
+    const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
+
     // 2A. Groq AI Handler
-    if (provider === 'groq' || modelId.startsWith('llama')) {
+    if (provider === 'groq' || modelId.startsWith('llama') || (!hasGeminiKey && hasGroqKey)) {
       const groqKey = userGroqKey || process.env.GROQ_API_KEY;
 
       if (!groqKey) {
         console.warn("Groq API Key missing. Checking Gemini key fallback...");
-        if (!process.env.GEMINI_API_KEY) {
+        if (!hasGeminiKey) {
           return res.json({ responses: generateFallbackResponses(transcript, targetLanguage) });
         }
       } else {
@@ -310,8 +313,11 @@ Return strictly valid JSON format:
   ]
 }`;
 
+    const hasGroqKey = Boolean(userGroqKey || process.env.GROQ_API_KEY);
+    const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
+
     // Groq Expansion
-    if (provider === 'groq' || modelId.startsWith('llama')) {
+    if (provider === 'groq' || modelId.startsWith('llama') || (!hasGeminiKey && hasGroqKey)) {
       const groqKey = userGroqKey || process.env.GROQ_API_KEY;
       if (groqKey) {
         const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
