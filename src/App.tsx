@@ -11,6 +11,7 @@ import { CommunicationStylePage } from './components/CommunicationStylePage';
 import { UserProfile, PredictedResponse, QuickNeed, VoiceEngineConfig, AIModelConfig } from './types';
 import { SpeechSynthesisService } from './lib/speechServices';
 import { SIMULATED_SCENARIOS } from './data/quickNeeds';
+import { shouldBypassServer, predictResponsesDirectly } from './lib/clientAiService';
 
 const DEFAULT_PROFILES: UserProfile[] = [
   {
@@ -75,6 +76,7 @@ const DEFAULT_AI_MODEL_CONFIG: AIModelConfig = {
   provider: 'gemini',
   modelId: 'gemini-3.6-flash',
   groqApiKey: '',
+  geminiApiKey: '',
 };
 
 export default function App() {
@@ -221,6 +223,22 @@ export default function App() {
     async (currentTranscript: string, currentSpeakerName?: string) => {
       setIsLoadingPredictions(true);
       try {
+        if (shouldBypassServer(aiModelConfig)) {
+          const result = await predictResponsesDirectly(
+            currentTranscript,
+            userProfile,
+            4,
+            aiModelConfig
+          );
+          if (result && result.responses && result.responses.length > 0) {
+            setResponses(result.responses);
+            // Default select the first AI option
+            setSelectedResponseId(result.responses[0].id);
+            setReadyText(result.responses[0].text);
+          }
+          return;
+        }
+
         const res = await fetch('/api/predict-responses', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

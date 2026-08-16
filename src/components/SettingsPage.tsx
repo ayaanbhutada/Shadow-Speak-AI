@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { VoiceEngineConfig, UserProfile, ElevenLabsVoice, AIModelConfig } from '../types';
 import { SpeechSynthesisService } from '../lib/speechServices';
+import { shouldBypassServer, predictResponsesDirectly } from '../lib/clientAiService';
 
 interface SettingsPageProps {
   onBack: () => void;
@@ -67,6 +68,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [voiceStatusMsg, setVoiceStatusMsg] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [showGroqKey, setShowGroqKey] = useState(false);
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [isTestingVoice, setIsTestingVoice] = useState(false);
   const [isTestingAI, setIsTestingAI] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<string | null>(null);
@@ -157,6 +159,24 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setIsTestingAI(true);
     setAiTestResult(null);
     try {
+      if (shouldBypassServer(localAIConfig)) {
+        const result = await predictResponsesDirectly(
+          'Hey Alex, do you want coffee or tea this morning?',
+          localProfile,
+          2,
+          localAIConfig
+        );
+        if (result && result.responses && result.responses.length > 0) {
+          const sample = result.responses[0].text;
+          const provider = result.providerUsed || localAIConfig.provider;
+          const model = result.modelUsed || localAIConfig.modelId;
+          setAiTestResult(`Success (Direct)! [${provider.toUpperCase()} (${model})]: "${sample}"`);
+        } else {
+          setAiTestResult('No predictions returned');
+        }
+        return;
+      }
+
       const res = await fetch('/api/predict-responses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -799,6 +819,40 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       </div>
                     </div>
 
+                    {/* Row 3 (Gemini only): API Key */}
+                    {localAIConfig.provider === 'gemini' && (
+                      <div className="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                        <div className="space-y-1.5 max-w-md">
+                          <span className="font-bold text-sm text-slate-100 block">
+                            Gemini API Key
+                          </span>
+                          <span className="text-xs text-slate-400 block leading-relaxed">
+                            Enter your Google AI Studio API key for direct browser generation (bypasses server)
+                          </span>
+                        </div>
+                        <div className="w-full sm:w-[380px] md:w-[440px] p-3 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2 shrink-0">
+                          <div className="relative">
+                            <input
+                              type={showGeminiKey ? 'text' : 'password'}
+                              value={localAIConfig.geminiApiKey || ''}
+                              onChange={(e) =>
+                                setLocalAIConfig((prev) => ({ ...prev, geminiApiKey: e.target.value }))
+                              }
+                              placeholder="e.g. AIzaSy..."
+                              className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 pr-16 text-xs font-mono text-slate-100 focus:outline-none focus:border-cyan-400"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowGeminiKey(!showGeminiKey)}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400 hover:text-slate-200"
+                            >
+                              {showGeminiKey ? 'Hide' : 'Show'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Row 3 (Groq only): API Key */}
                     {localAIConfig.provider === 'groq' && (
                       <div className="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
@@ -901,21 +955,39 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   </div>
 
                   <div className="bg-slate-900/90 border border-slate-800 rounded-3xl divide-y divide-slate-800/80 overflow-hidden shadow-xl">
-                    {/* Row 1: Gemini Server Key */}
+                    {/* Row 1: Gemini API Key */}
                     <div className="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
                       <div className="space-y-1.5 max-w-md">
                         <span className="font-bold text-sm text-slate-100 block">
                           Google Gemini API
                         </span>
                         <span className="text-xs text-slate-400 block leading-relaxed">
-                          Managed securely on the server backend via GEMINI_API_KEY
+                          Bypasses the backend server when custom key is provided
                         </span>
                       </div>
-                      <div className="w-full sm:w-[380px] md:w-[440px] p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between shrink-0">
-                        <span className="text-xs text-slate-300 font-medium">Status</span>
-                        <span className="px-3.5 py-1 rounded-full bg-emerald-950 text-emerald-300 font-extrabold text-xs border border-emerald-700/60">
-                          ACTIVE & READY
-                        </span>
+                      <div className="w-full sm:w-[380px] md:w-[440px] p-3 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2 shrink-0">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
+                          <span>Token</span>
+                          <span className="text-cyan-400">Direct Client Call</span>
+                        </div>
+                        <div className="relative">
+                          <input
+                            type={showGeminiKey ? 'text' : 'password'}
+                            value={localAIConfig.geminiApiKey || ''}
+                            onChange={(e) =>
+                              setLocalAIConfig((prev) => ({ ...prev, geminiApiKey: e.target.value }))
+                            }
+                            placeholder="e.g. AIzaSy..."
+                            className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 pr-16 text-xs font-mono text-slate-100 focus:outline-none focus:border-cyan-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowGeminiKey(!showGeminiKey)}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400 hover:text-slate-200"
+                          >
+                            {showGeminiKey ? 'Hide' : 'Show'}
+                          </button>
+                        </div>
                       </div>
                     </div>
 

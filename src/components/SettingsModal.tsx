@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { VoiceEngineConfig, UserProfile, ElevenLabsVoice, AIModelConfig } from '../types';
 import { SpeechSynthesisService } from '../lib/speechServices';
+import { shouldBypassServer, predictResponsesDirectly } from '../lib/clientAiService';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -67,6 +68,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [voiceStatusMsg, setVoiceStatusMsg] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [showGroqKey, setShowGroqKey] = useState(false);
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [isTestingVoice, setIsTestingVoice] = useState(false);
   const [isTestingAI, setIsTestingAI] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<string | null>(null);
@@ -158,6 +160,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setIsTestingAI(true);
     setAiTestResult(null);
     try {
+      if (shouldBypassServer(localAIConfig)) {
+        const result = await predictResponsesDirectly(
+          'Hey Alex, do you want coffee or tea this morning?',
+          localProfile,
+          2,
+          localAIConfig
+        );
+        if (result && result.responses && result.responses.length > 0) {
+          const sample = result.responses[0].text;
+          const provider = result.providerUsed || localAIConfig.provider;
+          const model = result.modelUsed || localAIConfig.modelId;
+          setAiTestResult(`Success (Direct)! [${provider.toUpperCase()} (${model})]: "${sample}"`);
+        } else {
+          setAiTestResult('No predictions returned');
+        }
+        return;
+      }
+
       const res = await fetch('/api/predict-responses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -740,9 +760,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <option value="gemini-2.5-flash">Google Gemini 2.5 Flash</option>
                     </select>
                   </div>
-                </div>
+                  <div>
+                    <label className="block text-xs text-slate-300 font-semibold mb-1">
+                      Gemini API Key (Optional if set in environment)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showGeminiKey ? 'text' : 'password'}
+                        value={localAIConfig.geminiApiKey || ''}
+                        onChange={(e) => setLocalAIConfig({ ...localAIConfig, geminiApiKey: e.target.value })}
+                        placeholder="e.g. AIzaSy..."
+                        id="gemini-api-key-input"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 pr-10 text-sm text-slate-100 focus:outline-none focus:border-cyan-500 font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowGeminiKey(!showGeminiKey)}
+                        className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300"
+                      >
+                        {showGeminiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Obtain your Gemini API key from Google AI Studio.
+                    </p>
+                  </div>
               )}
-
               {/* Test Model Connection */}
               <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div>
@@ -862,19 +905,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 )}
               </div>
 
-              {/* Gemini AI Backend Status */}
-              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-5 space-y-3">
+              {/* Gemini AI Backend Status & Key */}
+              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-5 space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <h3 className="text-sm font-bold text-cyan-400 flex items-center gap-2">
-                    <Brain className="w-4 h-4 text-cyan-400" /> Gemini AI Engine (Response Prediction)
+                    <Brain className="w-4 h-4 text-cyan-400" /> Google Gemini API Key
                   </h3>
-                  <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
-                    Server Active
+                  <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-400">
+                    Optional
                   </span>
                 </div>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  Shadow Speak AI utilizes Gemini server-side AI endpoints to analyze ambient transcript context and predict natural, 1-tap conversational options in real time.
-                </p>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">
+                    API Key (Saved locally in browser)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showGeminiKey ? 'text' : 'password'}
+                      value={localAIConfig.geminiApiKey || ''}
+                      onChange={(e) =>
+                        setLocalAIConfig({
+                          ...localAIConfig,
+                          geminiApiKey: e.target.value,
+                        })
+                      }
+                      placeholder="e.g. AIzaSy..."
+                      id="gemini-api-key-input-tab"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 pr-10 text-sm text-slate-100 focus:outline-none focus:border-cyan-500 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowGeminiKey(!showGeminiKey)}
+                      className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300"
+                    >
+                      {showGeminiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-xs mt-2 text-slate-400">
+                    If provided, the app will connect directly to Gemini from your browser, bypassing the server.
+                  </p>
+                </div>
               </div>
             </div>
           )}

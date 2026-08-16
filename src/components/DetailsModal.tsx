@@ -14,6 +14,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { PredictedResponse, UserProfile, AIModelConfig } from '../types';
+import { shouldBypassServer, expandResponseDirectly } from '../lib/clientAiService';
 import { detectResponseIntent, ResponseIntent } from './PredictedResponses';
 
 interface DetailedOption {
@@ -546,6 +547,31 @@ export const DetailsModal: React.FC<DetailsModalProps> = ({
   const handleFetchAIOptions = async () => {
     setIsLoadingMore(true);
     try {
+      if (shouldBypassServer(aiModelConfig)) {
+        const result = await expandResponseDirectly(
+          response.text,
+          response.tag,
+          transcript || '',
+          userProfile || null,
+          aiModelConfig!
+        );
+        if (result && result.options && Array.isArray(result.options)) {
+          const formatted: DetailedOption[] = result.options.map((item: any, idx: number) => ({
+            id: `ai-opt-${Date.now()}-${idx}`,
+            label: item.label || `AI Variation ${idx + 1}`,
+            text: item.text,
+            tone: item.tone || (mainIntent === 'negative' ? 'negative' : 'warm'),
+            intent: mainIntent,
+          }));
+
+          setOptions([
+            { id: 'opt-short', label: `Short Base Phrase (${response.tag})`, text: response.text, tone: mainIntent === 'negative' ? 'negative' : 'warm', intent: mainIntent },
+            ...formatted,
+          ]);
+        }
+        return;
+      }
+
       const res = await fetch('/api/expand-response', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

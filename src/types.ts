@@ -64,5 +64,6 @@ export interface AIModelConfig {
   provider: 'gemini' | 'groq';
   modelId: string;
   groqApiKey: string;
+  geminiApiKey: string;
 }
 
