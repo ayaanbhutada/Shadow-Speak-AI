@@ -6,6 +6,9 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const DEFAULT_GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+
 const currentFileName = typeof __filename === "string"
   ? __filename
   : typeof import.meta !== "undefined" && import.meta.url
@@ -50,7 +53,7 @@ app.post("/api/predict-responses", async (req, res) => {
     const { transcript, userProfile, currentSpeakers, count = 5, aiModelConfig } = req.body;
 
     const provider = aiModelConfig?.provider || 'gemini';
-    const modelId = aiModelConfig?.modelId || 'gemini-3.6-flash';
+    const modelId = aiModelConfig?.modelId || DEFAULT_GEMINI_MODEL;
     const userGroqKey = aiModelConfig?.groqApiKey || (req.headers['x-groq-key'] as string);
 
     const targetLanguage = userProfile?.language || 'English';
@@ -121,7 +124,7 @@ Each response MUST have:
     const hasGroqKey = Boolean(userGroqKey || process.env.GROQ_API_KEY);
     const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
 
-    const resolvedGroqModel = (modelId && modelId.startsWith('llama')) ? modelId : (provider === 'groq' ? (modelId && modelId.startsWith('gemini') ? 'llama-3.3-70b-versatile' : modelId || 'llama-3.3-70b-versatile') : 'llama-3.3-70b-versatile');
+    const resolvedGroqModel = (modelId && modelId.startsWith('llama')) ? modelId : (provider === 'groq' ? (modelId && modelId.startsWith('gemini') ? DEFAULT_GROQ_MODEL : modelId || DEFAULT_GROQ_MODEL) : DEFAULT_GROQ_MODEL);
 
     // 2A. Groq AI Handler
     if (provider === 'groq' || modelId.startsWith('llama') || (!hasGeminiKey && hasGroqKey)) {
@@ -194,7 +197,7 @@ Each response MUST have:
       });
     }
 
-    const geminiModel = modelId && modelId.startsWith('gemini') ? modelId : "gemini-3.6-flash";
+    const geminiModel = modelId && modelId.startsWith('gemini') ? modelId : DEFAULT_GEMINI_MODEL;
 
     const response = await ai.models.generateContent({
       model: geminiModel,
@@ -251,7 +254,7 @@ app.post("/api/expand-response", async (req, res) => {
     const { responseText, tag, transcript, userProfile, aiModelConfig } = req.body;
     const targetLanguage = userProfile?.language || 'English';
     const provider = aiModelConfig?.provider || 'gemini';
-    const modelId = aiModelConfig?.modelId || 'gemini-3.6-flash';
+    const modelId = aiModelConfig?.modelId || DEFAULT_GEMINI_MODEL;
     const userGroqKey = aiModelConfig?.groqApiKey || (req.headers['x-groq-key'] as string);
 
     let languageInstruction = '';
@@ -318,7 +321,7 @@ Return strictly valid JSON format:
     const hasGroqKey = Boolean(userGroqKey || process.env.GROQ_API_KEY);
     const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
 
-    const resolvedGroqExpansionModel = (modelId && modelId.startsWith('llama')) ? modelId : (provider === 'groq' ? (modelId && modelId.startsWith('gemini') ? 'llama-3.3-70b-versatile' : modelId || 'llama-3.3-70b-versatile') : 'llama-3.3-70b-versatile');
+    const resolvedGroqExpansionModel = (modelId && modelId.startsWith('llama')) ? modelId : (provider === 'groq' ? (modelId && modelId.startsWith('gemini') ? DEFAULT_GROQ_MODEL : modelId || DEFAULT_GROQ_MODEL) : DEFAULT_GROQ_MODEL);
 
     // Groq Expansion
     if (provider === 'groq' || modelId.startsWith('llama') || (!hasGeminiKey && hasGroqKey)) {
@@ -352,7 +355,7 @@ Return strictly valid JSON format:
     const ai = getGeminiClient();
     if (ai) {
       const response = await ai.models.generateContent({
-        model: modelId.startsWith('gemini') ? modelId : "gemini-3.6-flash",
+        model: modelId.startsWith('gemini') ? modelId : DEFAULT_GEMINI_MODEL,
         contents: expandPrompt,
         config: {
           responseMimeType: "application/json",

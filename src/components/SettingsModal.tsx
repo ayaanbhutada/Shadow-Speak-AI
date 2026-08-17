@@ -43,7 +43,20 @@ const DEFAULT_AI_MODEL_CONFIG: AIModelConfig = {
   provider: 'gemini',
   modelId: 'gemini-3.6-flash',
   groqApiKey: '',
+  geminiApiKey: '',
 };
+
+const DEFAULT_GEMINI_MODELS = [
+  'gemini-3.6-flash',
+  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+];
+
+const DEFAULT_GROQ_MODELS = [
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'mixtral-8x7b-32768',
+];
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -72,6 +85,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isTestingVoice, setIsTestingVoice] = useState(false);
   const [isTestingAI, setIsTestingAI] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<string | null>(null);
+  const [availableGeminiModels, setAvailableGeminiModels] = useState<string[]>(DEFAULT_GEMINI_MODELS);
+  const [availableGroqModels, setAvailableGroqModels] = useState<string[]>(DEFAULT_GROQ_MODELS);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
 
   useEffect(() => {
     setLocalVoiceConfig(voiceConfig);
@@ -136,6 +152,79 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setIsLoadingVoices(false);
     }
   };
+
+  const loadAvailableModels = async (provider: 'gemini' | 'groq', apiKey: string) => {
+    if (!apiKey) return;
+    setIsLoadingModels(true);
+
+    try {
+      if (provider === 'groq') {
+        const res = await fetch('https://api.groq.com/openai/v1/models', {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        });
+
+        if (!res.ok) {
+          throw new Error(`Groq model fetch failed (${res.status})`);
+        }
+
+        const data = await res.json();
+        const modelIds = Array.isArray(data?.data)
+          ? data.data
+              .map((item: any) => item?.id)
+              .filter((id: string | undefined) => Boolean(id))
+          : [];
+
+        const resolvedModels = modelIds.length > 0 ? modelIds : DEFAULT_GROQ_MODELS;
+        setAvailableGroqModels(resolvedModels);
+        setLocalAIConfig((prev) => ({
+          ...prev,
+          modelId: resolvedModels.includes(prev.modelId) ? prev.modelId : resolvedModels[0],
+        }));
+        return;
+      }
+
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      if (!res.ok) {
+        throw new Error(`Gemini model fetch failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      const modelIds = Array.isArray(data?.models)
+        ? data.models
+            .map((item: any) => item?.name?.replace(/^models\//, ''))
+            .filter((id: string | undefined) => Boolean(id) && /gemini/i.test(id || ''))
+        : [];
+
+      const resolvedModels = modelIds.length > 0 ? modelIds : DEFAULT_GEMINI_MODELS;
+      setAvailableGeminiModels(resolvedModels);
+      setLocalAIConfig((prev) => ({
+        ...prev,
+        modelId: resolvedModels.includes(prev.modelId) ? prev.modelId : resolvedModels[0],
+      }));
+    } catch {
+      if (provider === 'groq') {
+        setAvailableGroqModels(DEFAULT_GROQ_MODELS);
+      } else {
+        setAvailableGeminiModels(DEFAULT_GEMINI_MODELS);
+      }
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  useEffect(() => {
+    if (localAIConfig.provider === 'groq' && localAIConfig.groqApiKey) {
+      loadAvailableModels('groq', localAIConfig.groqApiKey);
+    }
+  }, [localAIConfig.provider, localAIConfig.groqApiKey]);
+
+  useEffect(() => {
+    if (localAIConfig.provider === 'gemini' && localAIConfig.geminiApiKey) {
+      loadAvailableModels('gemini', localAIConfig.geminiApiKey);
+    }
+  }, [localAIConfig.provider, localAIConfig.geminiApiKey]);
 
   const handleTestSpeech = async () => {
     setIsTestingVoice(true);
@@ -693,10 +782,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </span>
                   </div>
 
-                  {/* Model Dropdown */}
                   <div>
                     <label className="block text-xs text-slate-300 font-semibold mb-1">
-                      Select Groq Llama Model
+                      Select Groq Model
                     </label>
                     <select
                       value={localAIConfig.modelId}
@@ -704,19 +792,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       id="groq-model-select"
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-100 focus:outline-none focus:border-amber-500 font-medium"
                     >
-                      <option value="llama-3.1-8b-instant">
-                        Llama 3.1 8B Instant (llama-3.1-8b-instant)
-                      </option>
-                      <option value="llama-3.3-70b-versatile">
-                        Llama 3.3 70B Versatile (llama-3.3-70b-versatile)
-                      </option>
+                      {availableGroqModels.map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
                     </select>
                     <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
-                      Select between <strong className="text-amber-300">llama-3.1-8b-instant</strong> for ultra low latency speech predictions and <strong className="text-amber-300">llama-3.3-70b-versatile</strong> for complex contextual conversations.
+                      {isLoadingModels ? 'Loading available Groq models...' : 'Select an available Groq model for your account.'}
                     </p>
                   </div>
 
-                  {/* Groq API Key */}
                   <div>
                     <label className="block text-xs text-slate-300 font-semibold mb-1">
                       Groq API Key (Optional if set in environment)
@@ -725,7 +811,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <input
                         type={showGroqKey ? 'text' : 'password'}
                         value={localAIConfig.groqApiKey}
-                        onChange={(e) => setLocalAIConfig({ ...localAIConfig, groqApiKey: e.target.value })}
+                        onChange={(e) => {
+                          const nextKey = e.target.value;
+                          setLocalAIConfig({ ...localAIConfig, groqApiKey: nextKey });
+                          if (nextKey) {
+                            loadAvailableModels('groq', nextKey);
+                          }
+                        }}
                         placeholder="e.g. gsk_..."
                         id="groq-api-key-input"
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 pr-10 text-sm text-slate-100 focus:outline-none focus:border-amber-500 font-mono"
@@ -749,16 +841,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <Brain className="w-4 h-4 text-cyan-400" /> Google Gemini Options
                   </h3>
                   <div>
-                    <label className="block text-xs text-slate-300 font-semibold mb-1">Select Gemini Version</label>
+                    <label className="block text-xs text-slate-300 font-semibold mb-1">Select Gemini Model</label>
                     <select
                       value={localAIConfig.modelId}
                       onChange={(e) => setLocalAIConfig({ ...localAIConfig, modelId: e.target.value })}
                       id="gemini-model-select"
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-100 focus:outline-none focus:border-cyan-500"
                     >
-                      <option value="gemini-3.6-flash">Google Gemini 3.6 Flash (Default & Fast)</option>
-                      <option value="gemini-2.5-flash">Google Gemini 2.5 Flash</option>
+                      {availableGeminiModels.map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
                     </select>
+                    <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+                      {isLoadingModels ? 'Loading available Gemini models...' : 'Select a Gemini model available on your API key.'}
+                    </p>
                   </div>
                   <div>
                     <label className="block text-xs text-slate-300 font-semibold mb-1">
@@ -768,7 +866,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <input
                         type={showGeminiKey ? 'text' : 'password'}
                         value={localAIConfig.geminiApiKey || ''}
-                        onChange={(e) => setLocalAIConfig({ ...localAIConfig, geminiApiKey: e.target.value })}
+                        onChange={(e) => {
+                          const nextKey = e.target.value;
+                          setLocalAIConfig({ ...localAIConfig, geminiApiKey: nextKey });
+                          if (nextKey) {
+                            loadAvailableModels('gemini', nextKey);
+                          }
+                        }}
                         placeholder="e.g. AIzaSy..."
                         id="gemini-api-key-input"
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 pr-10 text-sm text-slate-100 focus:outline-none focus:border-cyan-500 font-mono"
@@ -785,8 +889,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       Obtain your Gemini API key from Google AI Studio.
                     </p>
                   </div>
+                </div>
               )}
-              {/* Test Model Connection */}
+
               <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div>
                   <span className="text-xs font-bold text-slate-200">Test AI Prediction Engine</span>

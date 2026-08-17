@@ -44,7 +44,20 @@ const DEFAULT_AI_MODEL_CONFIG: AIModelConfig = {
   provider: 'gemini',
   modelId: 'gemini-3.6-flash',
   groqApiKey: '',
+  geminiApiKey: '',
 };
+
+const DEFAULT_GEMINI_MODELS = [
+  'gemini-3.6-flash',
+  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+];
+
+const DEFAULT_GROQ_MODELS = [
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'mixtral-8x7b-32768',
+];
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
   onBack,
@@ -72,6 +85,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [isTestingVoice, setIsTestingVoice] = useState(false);
   const [isTestingAI, setIsTestingAI] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<string | null>(null);
+  const [availableGeminiModels, setAvailableGeminiModels] = useState<string[]>(DEFAULT_GEMINI_MODELS);
+  const [availableGroqModels, setAvailableGroqModels] = useState<string[]>(DEFAULT_GROQ_MODELS);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
 
   useEffect(() => {
@@ -135,6 +151,81 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setIsLoadingVoices(false);
     }
   };
+
+  const loadAvailableModels = async (provider: 'gemini' | 'groq', apiKey: string) => {
+    if (!apiKey) return;
+    setIsLoadingModels(true);
+
+    try {
+      if (provider === 'groq') {
+        const res = await fetch('https://api.groq.com/openai/v1/models', {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        });
+
+        if (!res.ok) {
+          throw new Error(`Groq model fetch failed (${res.status})`);
+        }
+
+        const data = await res.json();
+        const modelIds = Array.isArray(data?.data)
+          ? data.data
+              .map((item: any) => item?.id)
+              .filter((id: string | undefined) => Boolean(id))
+          : [];
+
+        const resolvedModels = modelIds.length > 0 ? modelIds : DEFAULT_GROQ_MODELS;
+        setAvailableGroqModels(resolvedModels);
+
+        setLocalAIConfig((prev) => ({
+          ...prev,
+          modelId: resolvedModels.includes(prev.modelId) ? prev.modelId : resolvedModels[0],
+        }));
+        return;
+      }
+
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      if (!res.ok) {
+        throw new Error(`Gemini model fetch failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      const modelIds = Array.isArray(data?.models)
+        ? data.models
+            .map((item: any) => item?.name?.replace(/^models\//, ''))
+            .filter((id: string | undefined) => Boolean(id) && /gemini/i.test(id || ''))
+        : [];
+
+      const resolvedModels = modelIds.length > 0 ? modelIds : DEFAULT_GEMINI_MODELS;
+      setAvailableGeminiModels(resolvedModels);
+
+      setLocalAIConfig((prev) => ({
+        ...prev,
+        modelId: resolvedModels.includes(prev.modelId) ? prev.modelId : resolvedModels[0],
+      }));
+    } catch (error) {
+      if (provider === 'groq') {
+        setAvailableGroqModels(DEFAULT_GROQ_MODELS);
+      } else {
+        setAvailableGeminiModels(DEFAULT_GEMINI_MODELS);
+      }
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  useEffect(() => {
+    if (localAIConfig.provider === 'groq' && localAIConfig.groqApiKey) {
+      loadAvailableModels('groq', localAIConfig.groqApiKey);
+    }
+  }, [localAIConfig.provider, localAIConfig.groqApiKey]);
+
+  useEffect(() => {
+    if (localAIConfig.provider === 'gemini' && localAIConfig.geminiApiKey) {
+      loadAvailableModels('gemini', localAIConfig.geminiApiKey);
+    }
+  }, [localAIConfig.provider, localAIConfig.geminiApiKey]);
 
   const handleTestSpeech = async () => {
     setIsTestingVoice(true);
@@ -789,7 +880,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       <div className="w-full sm:w-[380px] md:w-[440px] p-3 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2 shrink-0">
                         <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
                           <span>Architecture</span>
-                          <span className="text-emerald-400">High Precision</span>
+                          <span className="text-emerald-400">
+                            {isLoadingModels ? 'Loading models...' : 'High Precision'}
+                          </span>
                         </div>
                         {localAIConfig.provider === 'gemini' ? (
                           <select
@@ -799,9 +892,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                             }
                             className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm text-slate-100 font-medium focus:outline-none focus:border-cyan-400"
                           >
-                            <option value="gemini-3.6-flash">Gemini 2.5 Flash (Recommended)</option>
-                            <option value="gemini-3.6-pro">Gemini 2.5 Pro (Clinical Reasoning)</option>
-                            <option value="gemini-1.5-flash">Gemini 1.5 Flash (Legacy)</option>
+                            {availableGeminiModels.map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
                           </select>
                         ) : (
                           <select
@@ -811,9 +906,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                             }
                             className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm text-slate-100 font-medium focus:outline-none focus:border-cyan-400"
                           >
-                            <option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile</option>
-                            <option value="llama3-70b-8192">Llama 3 70B (8k Context)</option>
-                            <option value="mixtral-8x7b-32768">Mixtral 8x7B (32k Context)</option>
+                            {availableGroqModels.map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
                           </select>
                         )}
                       </div>
@@ -835,9 +932,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                             <input
                               type={showGeminiKey ? 'text' : 'password'}
                               value={localAIConfig.geminiApiKey || ''}
-                              onChange={(e) =>
-                                setLocalAIConfig((prev) => ({ ...prev, geminiApiKey: e.target.value }))
-                              }
+                              onChange={(e) => {
+                                const nextKey = e.target.value;
+                                setLocalAIConfig((prev) => ({ ...prev, geminiApiKey: nextKey }));
+                                if (nextKey) {
+                                  loadAvailableModels('gemini', nextKey);
+                                }
+                              }}
                               placeholder="e.g. AIzaSy..."
                               className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 pr-16 text-xs font-mono text-slate-100 focus:outline-none focus:border-cyan-400"
                             />
@@ -869,9 +970,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                             <input
                               type={showGroqKey ? 'text' : 'password'}
                               value={localAIConfig.groqApiKey || ''}
-                              onChange={(e) =>
-                                setLocalAIConfig((prev) => ({ ...prev, groqApiKey: e.target.value }))
-                              }
+                              onChange={(e) => {
+                                const nextKey = e.target.value;
+                                setLocalAIConfig((prev) => ({ ...prev, groqApiKey: nextKey }));
+                                if (nextKey) {
+                                  loadAvailableModels('groq', nextKey);
+                                }
+                              }}
                               placeholder="gsk_..."
                               className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 pr-16 text-xs font-mono text-slate-100 focus:outline-none focus:border-cyan-400"
                             />

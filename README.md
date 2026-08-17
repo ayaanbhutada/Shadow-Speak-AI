@@ -15,6 +15,10 @@ View your app in AI Studio: https://ai.studio/apps/36db0991-fb08-437b-a7ef-2f74e
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. Set your API keys and optional model defaults in [.env.local](.env.local), for example:
+   - `GEMINI_API_KEY`
+   - `GEMINI_MODEL` (default: `gemini-3.6-flash`)
+   - `GROQ_API_KEY`
+   - `GROQ_MODEL` (default: `llama-3.3-70b-versatile`)
 3. Run the app:
    `npm run dev`
