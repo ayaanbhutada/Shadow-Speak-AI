@@ -220,7 +220,8 @@ Include:
 Each response MUST have:
 - text: A clear, expressive sentence to be spoken (8-14 words, in target language script).
 - tag: A short category pill label (under 3 words, in target language script, e.g. "Affirmation", "Negative / Refusal", "Alternative", "Follow-up", "Boundary", "Energy / Rest").
-- details: A MANDATORY rich, fully detailed expanded statement providing full context, rationale, or boundary setting (20-35 words, in target language script).`;
+
+Do not generate details in this call. Detailed response variations are fetched separately only when the user opens a response.`;
 
   try {
     if (provider === 'groq') {
@@ -232,7 +233,7 @@ Each response MUST have:
       const systemMsg = `You are the AAC prediction engine for "Shadow Speak AI". You must respond with a valid JSON object matching this schema:
 {
   "responses": [
-    { "id": "p1", "text": "Exact short sentence to speak (8-14 words)", "tag": "Short Label", "details": "Expanded details" }
+    { "id": "p1", "text": "Exact short sentence to speak (8-14 words)", "tag": "Short Label" }
   ]
 }`;
 
@@ -253,7 +254,6 @@ Each response MUST have:
           id: item.id || `groq-${Date.now()}-${idx}`,
           text: item.text,
           tag: item.tag || 'Suggested',
-          details: item.details || item.text,
         }));
         return { responses: responsesWithIds, providerUsed: 'groq', modelUsed: modelId };
       }
@@ -296,7 +296,6 @@ Each response MUST have:
                         id: { type: 'STRING' },
                         text: { type: 'STRING' },
                         tag: { type: 'STRING' },
-                        details: { type: 'STRING' },
                       },
                       required: ['text', 'tag'],
                     },
@@ -323,7 +322,6 @@ Each response MUST have:
             id: item.id || `opt-${Date.now()}-${idx}`,
             text: item.text,
             tag: item.tag || 'Suggested',
-            details: item.details || item.text,
           }));
           return { responses: responsesWithIds, providerUsed: 'gemini', modelUsed: geminiModel };
         }
