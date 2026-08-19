@@ -94,7 +94,7 @@ async function callGroqChatOnServer(
   temperature: number = 0.6
 ): Promise<any> {
   const model = modelId || DEFAULT_GROQ_MODEL;
-  const isReasoning = model.toLowerCase().includes('deepseek') || model.toLowerCase().includes('r1') || model.toLowerCase().includes('qwen');
+  const isReasoning = model.toLowerCase().includes('deepseek') || model.toLowerCase().includes('r1') || model.toLowerCase().includes('qwen') || model.toLowerCase().includes('gpt-oss');
 
   const requestPayload: any = {
     model,
@@ -105,7 +105,16 @@ async function callGroqChatOnServer(
 
   if (!isReasoning) {
     requestPayload.response_format = { type: 'json_object' };
+  } else {
+    requestPayload.reasoning_format = 'hidden';
+    if (model.toLowerCase().includes('gpt-oss')) {
+      requestPayload.reasoning_effort = 'low';
+    } else if (model.toLowerCase().includes('qwen3')) {
+      requestPayload.reasoning_effort = 'none';
+    }
   }
+
+  console.log('[Groq request]', JSON.stringify(requestPayload, null, 2));
 
   let res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -120,6 +129,7 @@ async function callGroqChatOnServer(
   if (!res.ok && res.status === 400 && requestPayload.response_format) {
     console.warn('Groq server json_object validation failed, retrying without strict json_object constraint...');
     delete requestPayload.response_format;
+    console.log('[Groq retry request]', JSON.stringify(requestPayload, null, 2));
     res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -132,10 +142,12 @@ async function callGroqChatOnServer(
 
   if (!res.ok) {
     const errText = await res.text();
+    console.error('[Groq error response]', errText);
     throw new Error(`Groq API Error (${res.status}): ${errText}`);
   }
 
   const data = await res.json();
+  console.log('[Groq response]', JSON.stringify(data, null, 2));
   const rawContent = data.choices?.[0]?.message?.content;
   if (!rawContent) {
     throw new Error('Groq returned empty response content.');
@@ -157,7 +169,7 @@ app.get("/api/health", (req, res) => {
 // 2. Predict Responses endpoint using Gemini or Groq AI models
 app.post("/api/predict-responses", async (req, res) => {
   try {
-    const { transcript, userProfile, currentSpeakers, count = 5, aiModelConfig, conversationHistory } = req.body;
+    const { transcript, userProfile, currentSpeakers, count = 4, aiModelConfig, conversationHistory } = req.body;
 
     const provider = aiModelConfig?.provider || 'gemini';
     const modelId = aiModelConfig?.modelId || DEFAULT_GEMINI_MODEL;
@@ -165,79 +177,56 @@ app.post("/api/predict-responses", async (req, res) => {
 
     const targetLanguage = userProfile?.language || 'English';
 
-    let languageInstruction = '';
-    if (targetLanguage === 'Hindi') {
-      languageInstruction = `CRITICAL LANGUAGE REQUIREMENT:
-You MUST generate ALL predicted responses, text, tags, and details ENTIRELY in the HINDI language, written strictly in DEVANAGARI SCRIPT (देवनागरी लिपि). Do NOT use Latin/Roman script for Hindi.
-Example:
-- text: "हाँ, यह बहुत अच्छा विचार है।"
-- tag: "उत्तर"
-- details: "हाँ, यह बहुत अच्छा विचार है, मुझे यह बहुत पसंद आया।"`;
-    } else if (targetLanguage === 'Hinglish') {
-      languageInstruction = `CRITICAL LANGUAGE REQUIREMENT:
-You MUST generate ALL predicted responses in conversational HINGLISH (Hindi-English mix) written strictly in DEVANAGARI SCRIPT (देवनागरी लिपि). Transliterate common spoken English words into Devanagari alongside Hindi words. Do NOT use Roman/Latin script.
-Example:
-- text: "हाँ, यह आईडिया एकदम ग्रेट है!"
-- tag: "सुझाव"
-- details: "हाँ, यह आईडिया एकदम ग्रेट है, चलो अभी ट्राय करते हैं।"`;
-    } else {
-      languageInstruction = `Language Requirement: Generate responses in clear, natural English.`;
-    }
-
     const profileText = userProfile ? `
-Patient Name: ${userProfile.name || 'Alex'}
-Target Language: ${targetLanguage}
-Condition Context: ALS / Speech impaired.
-Caregiver / Listener Context: ${userProfile.caregiverContext || 'Family member or friend'}
-Preferred Tone: ${userProfile.tone || 'Warm, natural, direct'}
-Key Relationships: ${userProfile.relationships || 'Family, healthcare team'}
-${userProfile.communicationStyleSummary ? `Communication Style Profile (10 Daily Life Preferences): ${userProfile.communicationStyleSummary}` : ''}
-${userProfile.communicationStyleTraits && userProfile.communicationStyleTraits.length > 0 ? `Active Style Personality Traits: ${userProfile.communicationStyleTraits.join(', ')}` : ''}
-` : 'Patient: Alex, ALS patient with clear cognition.';
+  Patient Name: ${userProfile.name || 'Alex'}
+  Target Language: ${targetLanguage}
+  Condition Context: ALS / Speech impaired.
+  Caregiver / Listener Context: ${userProfile.caregiverContext || 'Family member or friend'}
+  Preferred Tone: ${userProfile.tone || 'Warm & Natural'}
+  Key Relationships: ${userProfile.relationships || 'Family, healthcare providers, friends'}
+  ${userProfile.conditionNotes ? `Condition Notes: ${userProfile.conditionNotes}` : ''}
+  ${userProfile.communicationStyleSummary ? `Communication Style Profile: ${userProfile.communicationStyleSummary}` : ''}
+  ${userProfile.communicationStyleTraits && userProfile.communicationStyleTraits.length > 0 ? `Communication Style Traits: ${userProfile.communicationStyleTraits.join(', ')}` : ''}
+  ` : `
+  Patient Name: Alex
+  Target Language: English
+  Condition Context: ALS / Speech impaired.
+  Caregiver / Listener Context: Family member or friend
+  Preferred Tone: Warm & Natural
+  Key Relationships: Family, healthcare providers, friends`;
 
     const historyText = Array.isArray(conversationHistory) && conversationHistory.length > 0
       ? conversationHistory.slice(-4).map((entry: any) => {
-          const spk = entry.isUserSpeaker ? `${userProfile?.name || 'User'} (Patient/You)` : (entry.speaker || 'Ambient Speaker');
-          return `- [${spk}] (${entry.timestamp || 'Recent'}): "${entry.text}"`;
+          return `- [${entry.timestamp || 'Recent'}] "${entry.text}"`;
         }).join('\n')
       : '';
 
-    const prompt = `You are the AI engine for "Shadow Speak AI", a high-speed AAC (Augmentative and Alternative Communication) system for people living with ALS and speech loss.
-
-${historyText ? `Recent Multi-Turn Conversation Memory (Previous dialogue and user statements):
-${historyText}
-
-` : ''}Current incoming dialogue statement captured via background microphone:
-"""
-${transcript || "Hey! What would you like to have for dinner tonight?"}
-"""
-
+    const prompt = `Context:
 User Profile & Preferences:
 ${profileText}
 
-${languageInstruction}
+Memory:
+${historyText || '- None'}
+
+Latest input: "${transcript || 'Do you want some water?'}"
+
+${targetLanguage === 'Hindi'
+  ? 'Language Requirement: Generate responses in Hindi using Devanagari script.'
+  : targetLanguage === 'Hinglish'
+    ? 'Language Requirement: Generate conversational Hinglish using Devanagari script.'
+    : 'Language Requirement: Generate responses in clear, natural English.'}
 
 Task:
 Generate exactly ${count} distinct, natural, human-sounding response options that the user can select with 1 tap or eye-gaze.
 Each option must be deeply relevant to the incoming dialogue and contextually aware of the recent conversation memory above.
 
-CRITICAL VARIETY & DETAIL REQUIREMENTS:
-You MUST include a balanced range of thoughts, INCLUDING AT LEAST ONE EXPLICIT NEGATIVE / DISAGREEMENT / REFUSAL / BOUNDARY THOUGHT so the user has full voice autonomy.
-Generate rich, complete, highly expressive sentences.
+Requirements:
+1. Include at least 1 explicit negative/refusal.
+2. Mix Affirmation, Refusal, Alternative, Question, and Energy/Rest where relevant.
+3. Each text must be 8-14 words; each tag must be under 3 words.
+4. Do not generate details in this call. Details are fetched separately when the user opens a response.
 
-Include:
-1. Direct Affirmation / Positive answer with rationale
-2. EXPLICIT NEGATIVE THOUGHT / REFUSAL / DISAGREEMENT (e.g. "No, I disagree and am not comfortable with this", "I don't like this idea", "नहीं, मैं इससे सहमत नहीं हूँ", "ना, मुझे यह बिल्कुल नहीं चाहिए")
-3. Alternative / Neutral choice with explanation
-4. Gentle question / Follow-up asking for context
-5. Discomfort / Rest / Physical Energy request
-6. Urgent / Priority action request
-
-Each response MUST have:
-- text: A clear, expressive sentence to be spoken (8-14 words, in target language script).
-- tag: A short category pill label (under 3 words, in target language script, e.g. "Affirmation", "Negative / Refusal", "Alternative", "Follow-up", "Boundary", "Energy / Rest").
-
-Do not generate details in this call. Detailed response variations are fetched separately only when the user opens a response.`;
+Return only valid JSON: {"responses":[{"id":"p1","text":"...","tag":"..."}]}`;
 
     const hasGroqKey = Boolean(userGroqKey || process.env.GROQ_API_KEY);
     const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
