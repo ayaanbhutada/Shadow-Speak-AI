@@ -213,14 +213,14 @@ export const CommunicationStylePage: React.FC<CommunicationStylePageProps> = ({
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-base sm:text-lg font-black tracking-tight text-white leading-tight">
-                    Communication Style Assessment
+                    Personalize Your Shadow
                   </h1>
                   <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 hidden md:inline">
-                    10 Questions • Multi-Selection
+                    10 Scenarios • Multi-Selection
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  Configuring style for <span className="text-cyan-300 font-bold">{userProfile.name}</span>
+                  Configuring shadow voice for <span className="text-cyan-300 font-bold">{userProfile.name}</span>
                   {' • '}
                   <span className="text-emerald-400 font-bold">{answerCount} preferences active</span>
                 </p>
@@ -265,7 +265,7 @@ export const CommunicationStylePage: React.FC<CommunicationStylePageProps> = ({
         <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-xl space-y-3">
           <div className="flex items-center justify-between px-1">
             <span className="text-xs font-black uppercase tracking-wider text-slate-400">
-              Style Scenarios (10 Questions)
+              Personalize Your Shadow (10 Scenarios)
             </span>
             <span className="text-xs font-bold text-cyan-400">
               Select any scenario to customize
@@ -547,7 +547,7 @@ export const CommunicationStylePage: React.FC<CommunicationStylePageProps> = ({
             <div className="flex items-center space-x-2">
               <Sparkles className="w-5 h-5 text-cyan-400" />
               <h3 className="text-base font-black text-white">
-                Live Compiled Communication Persona
+                Live Compiled Shadow Persona & Nuance
               </h3>
             </div>
             <span className="text-xs font-bold text-emerald-400 bg-emerald-950/80 px-3 py-1 rounded-full border border-emerald-800">
@@ -588,7 +588,7 @@ export const CommunicationStylePage: React.FC<CommunicationStylePageProps> = ({
             className="px-8 py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-slate-950 font-black text-base shadow-xl shadow-cyan-950/60 hover:scale-105 transition-all flex items-center gap-2"
           >
             <Save className="w-5 h-5" />
-            <span>Save Style Profile & Return</span>
+            <span>Save Personalized Shadow & Return</span>
           </button>
         </div>
       </main>

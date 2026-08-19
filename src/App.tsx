@@ -8,9 +8,14 @@ import { SettingsPage } from './components/SettingsPage';
 import { DetailsModal } from './components/DetailsModal';
 import { LandingPage } from './components/LandingPage';
 import { CommunicationStylePage } from './components/CommunicationStylePage';
-import { UserProfile, PredictedResponse, QuickNeed, VoiceEngineConfig, AIModelConfig } from './types';
-import { SpeechSynthesisService } from './lib/speechServices';
-import { SIMULATED_SCENARIOS } from './data/quickNeeds';
+import { UserProfile, PredictedResponse, QuickNeed, VoiceEngineConfig, AIModelConfig, TranscriptEntry } from './types';
+import { SpeechSynthesisService, SpeechRecognitionService } from './lib/speechServices';
+import {
+  SIMULATED_SCENARIOS,
+  getQuickNeedsForLanguage,
+  getSimulatedScenariosForLanguage,
+  getInitialResponsesForLanguage,
+} from './data/quickNeeds';
 import { shouldBypassServer, predictResponsesDirectly } from './lib/clientAiService';
 
 const DEFAULT_PROFILES: UserProfile[] = [
@@ -24,6 +29,17 @@ const DEFAULT_PROFILES: UserProfile[] = [
     communicationAnswers: { 1: [1, 2], 2: [1, 3], 3: [1, 8], 4: [1, 2], 5: [1, 3], 6: [1, 3], 7: [1, 2], 8: [1, 5], 9: [1, 9], 10: [1, 2] },
     communicationStyleSummary: 'Hydration: [Short & Polite, Gentle & Specific] • Small Talk: [Enthusiastic, Casual Update] • Health: [Upbeat & Positive, Warm & Grateful] • Activity: [Outdoor Fresh Air, Shared Entertainment] • Departure: [Warm Gratitude, Safety Check] • Food: [Gentle Soup / Warm, Comfort Food] • Comfort: [Comfortable, Head Elevation] • Social: [Social & Engaged, Music Company] • Meds: [Routine Confirmed, Stable & Comfort] • Weekend: [Scenic Outing, Cozy Home]',
     communicationStyleTraits: ['Short & Polite', 'Gentle & Specific', 'Enthusiastic', 'Casual Update', 'Upbeat & Positive', 'Warm & Grateful', 'Outdoor Fresh Air', 'Shared Entertainment', 'Warm Gratitude', 'Safety Check', 'Gentle Soup / Warm', 'Comfort Food', 'Comfortable', 'Head Elevation', 'Social & Engaged', 'Music Company', 'Routine Confirmed', 'Stable & Comfort', 'Scenic Outing', 'Cozy Home'],
+  },
+  {
+    name: 'Rajesh Verma',
+    caregiverContext: 'पत्नी सुनीता एवं देखभालकर्ता अमित',
+    tone: 'Warm & Natural',
+    relationships: 'परिवार, चिकित्सक एवं मित्र',
+    conditionNotes: 'हिंदी भाषा और देवनागरी लिपि में संवाद',
+    language: 'Hindi',
+    communicationAnswers: { 1: [1, 2], 2: [1, 3], 3: [1, 2], 4: [1, 2], 5: [1, 2], 6: [1, 3], 7: [1, 2], 8: [1, 2], 9: [1, 2], 10: [1, 2] },
+    communicationStyleSummary: 'जलपान: [विनम्र व संक्षिप्त, सौम्य व स्पष्ट] • संवाद: [उत्साही, संक्षिप्त समीक्षा] • स्वास्थ्य: [सकारात्मक ऊर्जा, विनम्र आभार] • गतिविधि: [ताज़ी हवा, संगीत व आराम] • प्रस्थान: [हार्दिक आभार, देखभाल व सुरक्षा]',
+    communicationStyleTraits: ['विनम्र व संक्षिप्त', 'सौम्य व स्पष्ट', 'उत्साही', 'सकारात्मक ऊर्जा', 'विनम्र आभार', 'ताज़ी हवा', 'हार्दिक आभार'],
   },
   {
     name: 'Priya Sharma',
@@ -127,24 +143,38 @@ export default function App() {
 
   // ASR & Conversation State
   const [isListening, setIsListening] = useState<boolean>(true);
+  const [interimTranscript, setInterimTranscript] = useState<string>('');
+  const [isAudioActive, setIsAudioActive] = useState<boolean>(false);
+  const [asrStatusMessage, setAsrStatusMessage] = useState<string>('');
+
+  const initialScenarios = getSimulatedScenariosForLanguage(userProfile.language, userProfile.name);
   const [transcript, setTranscript] = useState<string>(
-    'Hey Alex! We are ordering dinner now. Do you want pizza or pasta tonight?'
+    initialScenarios[0]?.text || 'Hey Alex! We are ordering dinner now. Do you want pizza or pasta tonight?'
   );
-  const [speaker, setSpeaker] = useState<string>('Family Member');
+  const [speaker, setSpeaker] = useState<string>(
+    initialScenarios[0]?.speaker || 'Family Member'
+  );
   const [timestamp, setTimestamp] = useState<string>('Just now');
 
-  // AI Predicted Responses
-  const [responses, setResponses] = useState<PredictedResponse[]>([
-    { id: 'p1', text: 'Pizza sounds great!', tag: 'Direct Answer', details: 'Pizza sounds great! I would love a slice of pepperoni or cheese.' },
-    { id: 'p2', text: "I'd prefer pasta today.", tag: 'Alternative', details: "I'd prefer pasta today with a fresh garden salad." },
-    { id: 'p3', text: "I'm not very hungry right now.", tag: 'Statement', details: "I'm not very hungry right now, maybe just a warm soup or drink." },
-    { id: 'p4', text: 'What are you having?', tag: 'Follow-up', details: 'What are you having? Surprise me with your favorite choice!' },
-  ]);
+  const speechDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const audioActiveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const fetchAIPredictionsRef = useRef<(text: string, speakerName?: string) => Promise<void>>(async () => {});
+
+  // AI Predicted Responses dynamically initialized to user profile language
+  const [responses, setResponses] = useState<PredictedResponse[]>(() =>
+    getInitialResponsesForLanguage(userProfile.language)
+  );
   const [isLoadingPredictions, setIsLoadingPredictions] = useState<boolean>(false);
-  const [selectedResponseId, setSelectedResponseId] = useState<string | null>('p1');
+  const [selectedResponseId, setSelectedResponseId] = useState<string | null>(() => {
+    const init = getInitialResponsesForLanguage(userProfile.language);
+    return init[0]?.id || 'p1';
+  });
 
   // Speech Bar State
-  const [readyText, setReadyText] = useState<string>('Pizza sounds great!');
+  const [readyText, setReadyText] = useState<string>(() => {
+    const init = getInitialResponsesForLanguage(userProfile.language);
+    return init[0]?.text || 'Pizza sounds great!';
+  });
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
 
   // UI State
@@ -169,6 +199,120 @@ export default function App() {
       console.error(e);
     }
   }, [isEyeGazeMode]);
+
+  // Conversation Memory State
+  const [conversationHistory, setConversationHistory] = useState<TranscriptEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem(`shadow_speak_conversation_history_${userProfile.name}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    const scen = getSimulatedScenariosForLanguage(userProfile.language, userProfile.name)[0];
+    return [
+      {
+        id: 'seed-1',
+        speaker: scen?.speaker || 'Family Member',
+        text: scen?.text || 'Hey Alex! We are ordering dinner now. Do you want pizza or pasta tonight?',
+        timestamp: 'Just now',
+        isUserSpeaker: false,
+      },
+    ];
+  });
+
+  // Save history whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        `shadow_speak_conversation_history_${userProfile.name}`,
+        JSON.stringify(conversationHistory)
+      );
+    } catch (e) {
+      console.error(e);
+    }
+  }, [conversationHistory, userProfile.name]);
+
+  // Switch history and sync responses when active profile or language changes
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`shadow_speak_conversation_history_${userProfile.name}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setConversationHistory(parsed);
+          const latestAmbient = [...parsed].reverse().find((e: TranscriptEntry) => !e.isUserSpeaker);
+          if (latestAmbient) {
+            setTranscript(latestAmbient.text);
+            setSpeaker(latestAmbient.speaker);
+          }
+          return;
+        }
+      }
+      const scenarios = getSimulatedScenariosForLanguage(userProfile.language, userProfile.name);
+      const defaultSeed = scenarios[0] || {
+        speaker: userProfile.caregiverContext || 'Caregiver',
+        text: `Hello ${userProfile.name}, how can I help you right now?`,
+      };
+      setConversationHistory([
+        {
+          id: `seed-${Date.now()}`,
+          speaker: defaultSeed.speaker,
+          text: defaultSeed.text,
+          timestamp: 'Just now',
+          isUserSpeaker: false,
+        },
+      ]);
+      setTranscript(defaultSeed.text);
+      setSpeaker(defaultSeed.speaker);
+
+      const localizedResp = getInitialResponsesForLanguage(userProfile.language);
+      setResponses(localizedResp);
+      if (localizedResp[0]) {
+        setSelectedResponseId(localizedResp[0].id);
+        setReadyText(localizedResp[0].text);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [userProfile.name, userProfile.language]);
+
+  const handleAddHistoryEntry = useCallback((text: string, speakerName: string, isUser: boolean = false) => {
+    if (!text || !text.trim()) return;
+    const cleanText = text.trim();
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    setConversationHistory((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.text === cleanText && last.isUserSpeaker === isUser) {
+        return prev;
+      }
+      const newEntry: TranscriptEntry = {
+        id: `turn-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        speaker: speakerName,
+        text: cleanText,
+        timestamp: timeStr,
+        isUserSpeaker: isUser,
+      };
+      // Keep strictly the last 4 conversation terms in memory buffer
+      return [...prev.slice(-3), newEntry];
+    });
+  }, []);
+
+  const handleClearHistory = useCallback(() => {
+    setConversationHistory([]);
+    try {
+      localStorage.removeItem(`shadow_speak_conversation_history_${userProfile.name}`);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [userProfile.name]);
+
+  const handleDeleteHistoryEntry = useCallback((id: string) => {
+    setConversationHistory((prev) => prev.filter((item) => item.id !== id));
+  }, []);
 
   useEffect(() => {
     try {
@@ -221,6 +365,7 @@ export default function App() {
   // Function to fetch AI predicted responses from server Gemini / Groq API
   const fetchAIPredictions = useCallback(
     async (currentTranscript: string, currentSpeakerName?: string) => {
+      if (!currentTranscript || !currentTranscript.trim()) return;
       setIsLoadingPredictions(true);
       try {
         if (shouldBypassServer(aiModelConfig)) {
@@ -228,7 +373,8 @@ export default function App() {
             currentTranscript,
             userProfile,
             4,
-            aiModelConfig
+            aiModelConfig,
+            conversationHistory
           );
           if (result && result.responses && result.responses.length > 0) {
             setResponses(result.responses);
@@ -248,6 +394,7 @@ export default function App() {
             currentSpeaker: currentSpeakerName || speaker,
             count: 4,
             aiModelConfig,
+            conversationHistory,
           }),
         });
 
@@ -266,90 +413,132 @@ export default function App() {
         setIsLoadingPredictions(false);
       }
     },
-    [userProfile, speaker, aiModelConfig]
+    [userProfile, speaker, aiModelConfig, conversationHistory]
   );
 
-  // Speech Recognition (ASR) setup using Web Speech API
+  // Keep ref up to date to prevent closure staleness in ASR callbacks
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    fetchAIPredictionsRef.current = fetchAIPredictions;
+  }, [fetchAIPredictions]);
 
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  // Sync recognition language whenever active user profile changes
+  useEffect(() => {
+    SpeechRecognitionService.updateLanguage(userProfile.language || 'English');
+  }, [userProfile.language]);
 
-    if (!SpeechRecognition) {
-      console.warn('Web Speech Recognition API is not supported in this browser.');
-      return;
-    }
+  // Setup continuous robust Speech Recognition
+  useEffect(() => {
+    const handleInterim = (interimText: string) => {
+      setInterimTranscript(interimText);
+      setIsAudioActive(true);
 
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
+      if (audioActiveTimerRef.current) clearTimeout(audioActiveTimerRef.current);
+      audioActiveTimerRef.current = setTimeout(() => {
+        setIsAudioActive(false);
+      }, 1800);
+    };
 
-      recognition.onresult = (event: any) => {
-        let finalTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          }
-        }
+    const handleFinal = (finalText: string) => {
+      setInterimTranscript('');
+      setIsAudioActive(true);
 
-        if (finalTranscript.trim()) {
-          setTranscript(finalTranscript.trim());
-          setSpeaker('Ambient Speaker');
-          setTimestamp('Just now');
-          fetchAIPredictions(finalTranscript.trim(), 'Ambient Speaker');
-        }
-      };
+      if (audioActiveTimerRef.current) clearTimeout(audioActiveTimerRef.current);
+      audioActiveTimerRef.current = setTimeout(() => {
+        setIsAudioActive(false);
+      }, 1500);
 
-      recognition.onerror = (event: any) => {
-        console.warn('Speech recognition error:', event.error);
-      };
+      setTranscript(finalText);
+      setSpeaker('Ambient Speaker');
+      setTimestamp('Just now');
+      handleAddHistoryEntry(finalText, 'Ambient Speaker', false);
 
-      recognitionRef.current = recognition;
-
-      if (isListening) {
-        recognition.start();
+      // Debounce AI prediction by 2000ms (2 seconds) so speaker can finish their full sentence/thought naturally before calling Gemini or Groq API
+      if (speechDebounceTimerRef.current) {
+        clearTimeout(speechDebounceTimerRef.current);
       }
-    } catch (err) {
-      console.error('Failed to initialize speech recognition:', err);
+      speechDebounceTimerRef.current = setTimeout(() => {
+        fetchAIPredictionsRef.current(finalText, 'Ambient Speaker');
+      }, 2000);
+    };
+
+    const handleStatusChange = (active: boolean, errorMsg?: string) => {
+      setIsListening(active);
+      if (errorMsg) {
+        setAsrStatusMessage(errorMsg);
+      } else {
+        setAsrStatusMessage('');
+      }
+    };
+
+    const handleError = (errMsg: string) => {
+      setAsrStatusMessage(errMsg);
+    };
+
+    SpeechRecognitionService.initialize(
+      {
+        onInterim: handleInterim,
+        onFinal: handleFinal,
+        onSpeechStart: () => setIsAudioActive(true),
+        onSpeechEnd: () => {
+          if (audioActiveTimerRef.current) clearTimeout(audioActiveTimerRef.current);
+          audioActiveTimerRef.current = setTimeout(() => {
+            setIsAudioActive(false);
+          }, 1000);
+        },
+        onStatusChange: handleStatusChange,
+        onError: handleError,
+      },
+      SpeechRecognitionService.getRecognitionLanguage(userProfile.language)
+    );
+
+    if (isListening) {
+      SpeechRecognitionService.start();
     }
 
     return () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {}
-      }
+      if (speechDebounceTimerRef.current) clearTimeout(speechDebounceTimerRef.current);
+      if (audioActiveTimerRef.current) clearTimeout(audioActiveTimerRef.current);
+      SpeechRecognitionService.stop();
     };
-  }, [isListening, fetchAIPredictions]);
+  }, []);
 
   // Toggle ambient microphone listening
   const handleToggleListening = () => {
-    setIsListening((prev) => {
-      const next = !prev;
-      if (recognitionRef.current) {
-        if (next) {
-          try {
-            recognitionRef.current.start();
-          } catch {}
-        } else {
-          try {
-            recognitionRef.current.stop();
-          } catch {}
-        }
-      }
-      return next;
-    });
+    const next = !isListening;
+    if (next) {
+      setAsrStatusMessage('');
+      SpeechRecognitionService.start(undefined, SpeechRecognitionService.getRecognitionLanguage(userProfile.language));
+      setIsListening(true);
+    } else {
+      SpeechRecognitionService.stop();
+      setIsListening(false);
+      setIsAudioActive(false);
+      setInterimTranscript('');
+    }
+  };
+
+  // Restart / Reconnect microphone
+  const handleResetMic = () => {
+    setAsrStatusMessage('Reconnecting microphone...');
+    SpeechRecognitionService.stop();
+    setTimeout(() => {
+      SpeechRecognitionService.start(undefined, SpeechRecognitionService.getRecognitionLanguage(userProfile.language));
+      setAsrStatusMessage('');
+    }, 300);
   };
 
   // Update transcript manually or via preset
   const handleUpdateTranscript = (newText: string, speakerName?: string) => {
+    if (speechDebounceTimerRef.current) {
+      clearTimeout(speechDebounceTimerRef.current);
+    }
+    setInterimTranscript('');
     setTranscript(newText);
-    if (speakerName) setSpeaker(speakerName);
+    const spk = speakerName || 'Ambient Speaker';
+    setSpeaker(spk);
     setTimestamp('Just now');
-    fetchAIPredictions(newText, speakerName);
+    handleAddHistoryEntry(newText, spk, false);
+    fetchAIPredictions(newText, spk);
   };
 
   // Handle option selection
@@ -362,6 +551,9 @@ export default function App() {
   const handleSpeak = async (textToSpeak?: string) => {
     const text = textToSpeak || readyText;
     if (!text.trim()) return;
+
+    // Record the user's vocalized AAC response to conversation memory
+    handleAddHistoryEntry(text, `${userProfile.name} (You)`, true);
 
     setIsSpeaking(true);
     try {
@@ -474,6 +666,7 @@ export default function App() {
         isEyeGazeMode={isEyeGazeMode}
         onToggleEyeGaze={() => setIsEyeGazeMode(!isEyeGazeMode)}
         onOpenStyleAssessment={() => setCurrentView('style-questionnaire')}
+        onClearHistory={handleClearHistory}
       />
     );
   }
@@ -506,12 +699,19 @@ export default function App() {
         {/* Section 1: Live Conversation Transcript (ASR) */}
         <TranscriptSection
           transcript={transcript}
+          interimTranscript={interimTranscript}
+          isAudioActive={isAudioActive}
           speaker={speaker}
           timestamp={timestamp}
           isListening={isListening}
           onUpdateTranscript={handleUpdateTranscript}
           onRequestPredictions={() => fetchAIPredictions(transcript, speaker)}
           isLoadingPredictions={isLoadingPredictions}
+          onResetMic={handleResetMic}
+          statusMessage={asrStatusMessage}
+          conversationHistory={conversationHistory}
+          onClearHistory={handleClearHistory}
+          onDeleteHistoryEntry={handleDeleteHistoryEntry}
         />
 
         {/* Section 2: AI Predicted Responses (One-Tap Target Selection) */}
@@ -534,6 +734,8 @@ export default function App() {
           isLoading={isLoadingPredictions}
           isEyeGazeMode={isEyeGazeMode}
           userProfile={userProfile}
+          transcript={typeof transcript === 'string' ? transcript : Array.isArray(transcript) ? (transcript as any[]).map((t) => `${t.speaker || ''}: ${t.text || t}`).join('\n') : ''}
+          aiModelConfig={aiModelConfig}
         />
 
         {/* Section 3: Quick Essential Needs (High Priority 1-Tap) */}
@@ -544,6 +746,7 @@ export default function App() {
             handleSpeak(need.phrase);
           }}
           isEyeGazeMode={isEyeGazeMode}
+          language={userProfile.language}
         />
       </main>
 

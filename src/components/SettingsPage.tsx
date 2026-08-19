@@ -36,6 +36,7 @@ interface SettingsPageProps {
   isEyeGazeMode?: boolean;
   onToggleEyeGaze?: () => void;
   onOpenStyleAssessment?: () => void;
+  onClearHistory?: () => void;
 }
 
 type TabType = 'tts' | 'aimodel' | 'apikeys' | 'profile' | 'accessibility';
@@ -70,6 +71,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   isEyeGazeMode = false,
   onToggleEyeGaze,
   onOpenStyleAssessment,
+  onClearHistory,
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('tts');
   const [localVoiceConfig, setLocalVoiceConfig] = useState<VoiceEngineConfig>(voiceConfig);
@@ -89,6 +91,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [availableGroqModels, setAvailableGroqModels] = useState<string[]>(DEFAULT_GROQ_MODELS);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [hasSaved, setHasSaved] = useState(false);
+  const [historyClearedMsg, setHistoryClearedMsg] = useState(false);
 
   useEffect(() => {
     setLocalVoiceConfig(voiceConfig);
@@ -1184,25 +1187,25 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                 {/* Status Tip Banner */}
                 {onOpenStyleAssessment && (
-                  <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-blue-950/80 via-slate-900 to-slate-900 border border-blue-800/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
+                  <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-cyan-950/80 via-slate-900 to-slate-900 border border-cyan-800/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <Sparkles className="w-5 h-5 text-blue-400" />
+                        <Sparkles className="w-5 h-5 text-cyan-400" />
                         <h3 className="font-bold text-base text-white">
-                          Communication Style Questionnaire
+                          Personalize Your Shadow
                         </h3>
                       </div>
                       <p className="text-xs text-slate-300">
-                        Take the 10-scenario assessment to fine-tune your personalized vocabulary and conversational nuance.
+                        Customize your 10-scenario assessment to fine-tune your personalized vocabulary and conversational nuance.
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={onOpenStyleAssessment}
                       id="open-questionnaire-from-settings"
-                      className="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-md shrink-0 transition-all"
+                      className="px-5 py-2.5 rounded-full bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-black text-xs sm:text-sm flex items-center gap-2 shadow-md shrink-0 transition-all"
                     >
-                      <span>Take Questionnaire</span>
+                      <span>Personalize Your Shadow</span>
                       <Sparkles className="w-4 h-4" />
                     </button>
                   </div>
@@ -1362,6 +1365,50 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm text-slate-100 focus:outline-none focus:border-cyan-400 resize-none"
                         />
                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section: Conversation Context Memory & Privacy */}
+                <div className="space-y-3">
+                  <div>
+                    <h2 className="text-base font-bold text-white">Conversation Memory & Privacy</h2>
+                    <p className="text-xs text-slate-400">
+                      Manage past conversation turns used by AI to remember context across dialogues
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                    <div className="space-y-1.5 max-w-md">
+                      <span className="font-bold text-sm text-slate-100 block">
+                        Delete Conversation Context History
+                      </span>
+                      <span className="text-xs text-slate-400 block leading-relaxed">
+                        Permanently wipes all remembered past ambient dialogue and spoken responses from local memory and storage.
+                      </span>
+                    </div>
+
+                    <div className="shrink-0 flex items-center gap-3">
+                      {historyClearedMsg && (
+                        <span className="text-xs text-emerald-400 font-bold flex items-center gap-1">
+                          <Check className="w-3.5 h-3.5" /> Context Cleared!
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onClearHistory) {
+                            onClearHistory();
+                            setHistoryClearedMsg(true);
+                            setTimeout(() => setHistoryClearedMsg(false), 3000);
+                          }
+                        }}
+                        id="clear-history-settings-btn"
+                        className="px-4 py-2.5 rounded-xl bg-red-950/60 hover:bg-red-900 text-red-200 hover:text-white border border-red-800/80 font-bold text-xs flex items-center gap-2 transition-all"
+                      >
+                        <VolumeX className="w-4 h-4 text-red-400" />
+                        <span>Delete All Context History</span>
+                      </button>
                     </div>
                   </div>
                 </div>

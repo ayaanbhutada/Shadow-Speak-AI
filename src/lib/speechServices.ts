@@ -218,3 +218,241 @@ export class SpeechSynthesisService {
   }
 }
 
+export interface SpeechRecognitionCallbacks {
+  onInterim?: (interimText: string) => void;
+  onFinal?: (finalText: string) => void;
+  onSpeechStart?: () => void;
+  onSpeechEnd?: () => void;
+  onStatusChange?: (isListening: boolean, error?: string) => void;
+  onError?: (error: string) => void;
+}
+
+export class SpeechRecognitionService {
+  private static recognition: any = null;
+  private static isListening: boolean = false;
+  private static shouldBeListening: boolean = false;
+  private static restartTimer: any = null;
+  private static callbacks: SpeechRecognitionCallbacks = {};
+  private static currentLanguage: string = 'en-US';
+  private static isSupported: boolean | null = null;
+  private static retryCount: number = 0;
+
+  static checkSupport(): boolean {
+    if (this.isSupported !== null) return this.isSupported;
+    if (typeof window === 'undefined') return false;
+    this.isSupported = !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+    return this.isSupported;
+  }
+
+  static getRecognitionLanguage(language?: string): string {
+    if (language === 'Hindi') return 'hi-IN';
+    if (language === 'Hinglish') return 'hi-IN';
+    return 'en-US';
+  }
+
+  static initialize(callbacks: SpeechRecognitionCallbacks, language: string = 'en-US') {
+    this.callbacks = callbacks;
+    this.currentLanguage = language;
+    if (typeof window === 'undefined') return;
+
+    const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionClass) {
+      this.isSupported = false;
+      this.callbacks.onError?.('Speech Recognition API is not supported in this browser. Please use Chrome, Edge, or Safari.');
+      return;
+    }
+
+    this.isSupported = true;
+
+    // Clean up prior instance if any
+    if (this.recognition) {
+      try {
+        this.recognition.onstart = null;
+        this.recognition.onresult = null;
+        this.recognition.onerror = null;
+        this.recognition.onend = null;
+        this.recognition.onspeechstart = null;
+        this.recognition.onspeechend = null;
+        this.recognition.abort();
+      } catch (e) {}
+      this.recognition = null;
+    }
+
+    try {
+      const rec = new SpeechRecognitionClass();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+      rec.lang = language;
+
+      rec.onstart = () => {
+        this.isListening = true;
+        this.retryCount = 0;
+        this.callbacks.onStatusChange?.(true);
+      };
+
+      rec.onspeechstart = () => {
+        this.callbacks.onSpeechStart?.();
+      };
+
+      rec.onspeechend = () => {
+        this.callbacks.onSpeechEnd?.();
+      };
+
+      rec.onresult = (event: any) => {
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const chunk = event.results[i][0]?.transcript || '';
+          if (event.results[i].isFinal) {
+            finalTranscript += chunk;
+          } else {
+            interimTranscript += chunk;
+          }
+        }
+
+        if (interimTranscript) {
+          this.callbacks.onInterim?.(interimTranscript);
+        }
+
+        if (finalTranscript.trim()) {
+          this.callbacks.onFinal?.(finalTranscript.trim());
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.warn('Speech recognition error event:', event.error);
+
+        if (event.error === 'no-speech') {
+          // No speech detected during continuous listening window — standard timeout, do not crash or abort
+          return;
+        }
+
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          this.shouldBeListening = false;
+          this.isListening = false;
+          this.callbacks.onStatusChange?.(false, 'Microphone permission blocked');
+          this.callbacks.onError?.('Microphone access denied. Please allow microphone permissions in your browser.');
+          return;
+        }
+
+        if (event.error === 'aborted') {
+          return;
+        }
+
+        if (event.error === 'network') {
+          this.callbacks.onError?.('Speech recognition network glitch. Reconnecting ambient microphone...');
+        }
+      };
+
+      rec.onend = () => {
+        this.isListening = false;
+
+        // Auto-restart smoothly if ambient continuous listening is enabled
+        if (this.shouldBeListening) {
+          if (this.restartTimer) clearTimeout(this.restartTimer);
+
+          const delay = Math.min(250 + this.retryCount * 250, 1500);
+          this.restartTimer = setTimeout(() => {
+            if (this.shouldBeListening && !this.isListening) {
+              try {
+                this.retryCount++;
+                rec.start();
+              } catch (e: any) {
+                if (e?.name !== 'InvalidStateError') {
+                  console.warn('Error auto-restarting speech recognition:', e);
+                }
+              }
+            }
+          }, delay);
+        } else {
+          this.callbacks.onStatusChange?.(false);
+        }
+      };
+
+      this.recognition = rec;
+    } catch (err: any) {
+      console.error('Failed to initialize SpeechRecognition:', err);
+      this.callbacks.onError?.(`Speech recognition initialization failed: ${err?.message || err}`);
+    }
+  }
+
+  static start(callbacks?: SpeechRecognitionCallbacks, language?: string) {
+    if (callbacks) this.callbacks = callbacks;
+    if (language) this.currentLanguage = language;
+
+    this.shouldBeListening = true;
+
+    if (!this.recognition) {
+      this.initialize(this.callbacks, this.currentLanguage);
+    } else if (language && this.recognition.lang !== language) {
+      try {
+        this.recognition.lang = language;
+      } catch {}
+    }
+
+    if (!this.recognition) return;
+
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
+
+    try {
+      this.recognition.start();
+    } catch (e: any) {
+      if (e?.name === 'InvalidStateError') {
+        // Recognition is already active
+        this.isListening = true;
+        this.callbacks.onStatusChange?.(true);
+      } else {
+        console.warn('Recognition start exception:', e);
+      }
+    }
+  }
+
+  static stop() {
+    this.shouldBeListening = false;
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
+    if (this.recognition) {
+      try {
+        this.recognition.stop();
+      } catch (e) {
+        console.warn('Recognition stop exception:', e);
+      }
+    }
+    this.isListening = false;
+    this.callbacks.onStatusChange?.(false);
+  }
+
+  static toggle(callbacks?: SpeechRecognitionCallbacks, language?: string): boolean {
+    if (this.shouldBeListening) {
+      this.stop();
+      return false;
+    } else {
+      this.start(callbacks, language);
+      return true;
+    }
+  }
+
+  static updateLanguage(language: string) {
+    const asrLang = this.getRecognitionLanguage(language);
+    this.currentLanguage = asrLang;
+    if (this.recognition) {
+      try {
+        const wasActive = this.shouldBeListening;
+        this.recognition.lang = asrLang;
+        if (wasActive && !this.isListening) {
+          this.start(this.callbacks, asrLang);
+        }
+      } catch (e) {
+        console.warn('Failed to update recognition language:', e);
+      }
+    }
+  }
+}
+

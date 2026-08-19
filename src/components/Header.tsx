@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mic, MicOff, Settings, Volume2, Sparkles, SlidersHorizontal, Eye, User } from 'lucide-react';
+import { Mic, MicOff, Settings, Volume2, Sparkles, SlidersHorizontal, Speech, User } from 'lucide-react';
 import { VoiceEngineConfig } from '../types';
 
 interface HeaderProps {
@@ -28,7 +28,7 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Brand & Logo */}
       <div className="flex items-center space-x-2.5">
         <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-emerald-400 flex items-center justify-center text-slate-950 font-black shadow-md shadow-cyan-500/20">
-          <Eye className="w-5 h-5 stroke-[2.5]" />
+          <Speech className="w-5 h-5 stroke-[2.5]" />
         </div>
         <div>
           <h1 className="text-lg sm:text-xl font-black tracking-tight text-white flex items-center gap-1.5">
@@ -84,11 +84,11 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onOpenStyleAssessment}
             id="open-style-assessment-btn"
             className="flex items-center gap-1.5 text-xs font-extrabold bg-gradient-to-r from-cyan-950 to-teal-950 hover:from-cyan-900 hover:to-teal-900 text-cyan-300 border border-cyan-800/80 px-3 py-1.5 rounded-lg transition-all shadow-sm"
-            title="Take 10-Question Communication Style Assessment"
+            title="Personalize Your Shadow (10-Scenario Style Assessment)"
           >
             <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="hidden sm:inline">Style Questionnaire</span>
-            <span className="sm:hidden">Style</span>
+            <span className="hidden sm:inline">Personalize Your Shadow</span>
+            <span className="sm:hidden">Personalize</span>
           </button>
         )}
 

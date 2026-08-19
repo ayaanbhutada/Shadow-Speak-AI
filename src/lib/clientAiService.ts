@@ -1,4 +1,4 @@
-import { AIModelConfig, UserProfile, PredictedResponse } from '../types';
+import { AIModelConfig, UserProfile, PredictedResponse, TranscriptEntry } from '../types';
 
 export function shouldBypassServer(aiModelConfig?: AIModelConfig): boolean {
   if (!aiModelConfig) return false;
@@ -18,6 +18,116 @@ function mapGeminiModel(modelId: string): string {
   return modelId || 'gemini-2.5-flash';
 }
 
+export function extractJsonFromText(rawText: string): any {
+  if (!rawText || !rawText.trim()) throw new Error('Empty response from AI engine');
+
+  // 1. Strip reasoning blocks like <think>...</think> (common in DeepSeek R1 / Qwen reasoning models on Groq)
+  let text = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+  // 2. Extract content from markdown code fences if wrapped
+  if (text.includes('```')) {
+    const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (match && match[1]) {
+      text = match[1].trim();
+    } else {
+      text = text.replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
+    }
+  }
+
+  // 3. Attempt direct JSON parsing
+  try {
+    return JSON.parse(text);
+  } catch (initialErr) {
+    // 4. Find the outermost JSON object { ... } or array [ ... ]
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      const candidate = text.substring(firstBrace, lastBrace + 1);
+      try {
+        return JSON.parse(candidate);
+      } catch (innerErr) {
+        // Fix common trailing comma before closing braces or brackets & strip non-printable characters
+        const fixed = candidate
+          .replace(/,\s*([}\]])/g, '$1')
+          .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ');
+        return JSON.parse(fixed);
+      }
+    }
+
+    const firstBracket = text.indexOf('[');
+    const lastBracket = text.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket > firstBracket) {
+      const candidate = text.substring(firstBracket, lastBracket + 1);
+      try {
+        return JSON.parse(candidate);
+      } catch (innerErr) {
+        const fixed = candidate.replace(/,\s*([}\]])/g, '$1');
+        return JSON.parse(fixed);
+      }
+    }
+
+    throw new Error(`Failed to extract valid JSON from AI response: ${initialErr instanceof Error ? initialErr.message : String(initialErr)}`);
+  }
+}
+
+async function callGroqWithAutoFallback(
+  groqKey: string,
+  modelId: string,
+  messages: Array<{ role: string; content: string }>,
+  temperature: number = 0.6
+): Promise<any> {
+  const model = modelId || 'llama-3.3-70b-versatile';
+  const isReasoning = model.toLowerCase().includes('deepseek') || model.toLowerCase().includes('r1') || model.toLowerCase().includes('qwen');
+
+  const requestPayload: any = {
+    model,
+    messages,
+    temperature,
+    max_tokens: 2048,
+  };
+
+  // Only pass response_format if not a reasoning model
+  if (!isReasoning) {
+    requestPayload.response_format = { type: 'json_object' };
+  }
+
+  let res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${groqKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestPayload),
+  });
+
+  // If 400 error (such as json_validate_failed), automatically retry cleanly without response_format constraint
+  if (!res.ok && res.status === 400 && requestPayload.response_format) {
+    console.warn('Groq json_object validation rejected, automatically retrying without strict json_object constraint...');
+    delete requestPayload.response_format;
+    res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${groqKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestPayload),
+    });
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Groq API Error (${res.status}): ${errText}`);
+  }
+
+  const data = await res.json();
+  const rawContent = data.choices?.[0]?.message?.content;
+  if (!rawContent) {
+    throw new Error('Groq returned empty completion content.');
+  }
+
+  return extractJsonFromText(rawContent);
+}
+
 function cleanJsonString(contentStr: string): string {
   let cleaned = contentStr.trim();
   if (cleaned.startsWith('```')) {
@@ -30,7 +140,8 @@ export async function predictResponsesDirectly(
   transcript: string,
   userProfile: UserProfile | null,
   count: number = 5,
-  aiModelConfig: AIModelConfig
+  aiModelConfig: AIModelConfig,
+  conversationHistory?: TranscriptEntry[]
 ): Promise<{ responses: PredictedResponse[]; providerUsed: string; modelUsed: string }> {
   const provider = aiModelConfig.provider;
   const modelId = aiModelConfig.modelId;
@@ -68,9 +179,19 @@ ${userProfile.communicationStyleTraits && userProfile.communicationStyleTraits.l
 `
     : 'Patient: Alex, ALS patient with clear cognition.';
 
+  const historyText = Array.isArray(conversationHistory) && conversationHistory.length > 0
+    ? conversationHistory.slice(-4).map((entry) => {
+        const spk = entry.isUserSpeaker ? `${userProfile?.name || 'User'} (Patient/You)` : (entry.speaker || 'Ambient Speaker');
+        return `- [${spk}] (${entry.timestamp || 'Recent'}): "${entry.text}"`;
+      }).join('\n')
+    : '';
+
   const prompt = `You are the AI engine for "Shadow Speak AI", a high-speed AAC (Augmentative and Alternative Communication) system for people living with ALS and speech loss.
 
-Current live conversation context captured via background microphone:
+${historyText ? `Recent Multi-Turn Conversation Memory (Previous dialogue and user statements):
+${historyText}
+
+` : ''}Current incoming dialogue statement captured via background microphone:
 """
 ${transcript || 'Hey! What would you like to have for dinner tonight?'}
 """
@@ -82,7 +203,7 @@ ${languageInstruction}
 
 Task:
 Generate exactly ${count} distinct, natural, human-sounding response options that the user can select with 1 tap or eye-gaze.
-Each option must be relevant to the incoming dialogue.
+Each option must be deeply relevant to the incoming dialogue and contextually aware of the recent conversation memory above.
 
 CRITICAL VARIETY & DETAIL REQUIREMENTS:
 You MUST include a balanced range of thoughts, INCLUDING AT LEAST ONE EXPLICIT NEGATIVE / DISAGREEMENT / REFUSAL / BOUNDARY THOUGHT so the user has full voice autonomy.
@@ -108,49 +229,33 @@ Each response MUST have:
         throw new Error('Groq API Key is missing in configuration.');
       }
 
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${groqKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: modelId || 'llama-3.3-70b-versatile',
-          messages: [
-            {
-              role: 'system',
-              content: `You are the AAC prediction engine for "Shadow Speak AI". Output strictly valid JSON object matching this schema:
+      const systemMsg = `You are the AAC prediction engine for "Shadow Speak AI". You must respond with a valid JSON object matching this schema:
 {
   "responses": [
-    { "id": "p1", "text": "Exact short sentence to speak", "tag": "Short Label", "details": "Expanded details" }
+    { "id": "p1", "text": "Exact short sentence to speak (8-14 words)", "tag": "Short Label", "details": "Expanded details" }
   ]
-}`,
-            },
-            { role: 'user', content: prompt },
-          ],
-          response_format: { type: 'json_object' },
-          temperature: 0.6,
-        }),
-      });
+}`;
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(`Groq API Error (${res.status}): ${errorText}`);
-      }
+      const userMsg = `${prompt}\n\nIMPORTANT: Return ONLY a valid JSON object with the "responses" array.`;
 
-      const data = await res.json();
-      const contentStr = data.choices?.[0]?.message?.content;
-      if (contentStr) {
-        const parsed = JSON.parse(cleanJsonString(contentStr));
-        if (parsed.responses && parsed.responses.length > 0) {
-          const responsesWithIds = parsed.responses.map((item: any, idx: number) => ({
-            id: item.id || `groq-${Date.now()}-${idx}`,
-            text: item.text,
-            tag: item.tag || 'Suggested',
-            details: item.details || item.text,
-          }));
-          return { responses: responsesWithIds, providerUsed: 'groq', modelUsed: modelId };
-        }
+      const parsed = await callGroqWithAutoFallback(
+        groqKey,
+        modelId,
+        [
+          { role: 'system', content: systemMsg },
+          { role: 'user', content: userMsg },
+        ],
+        0.6
+      );
+
+      if (parsed.responses && Array.isArray(parsed.responses) && parsed.responses.length > 0) {
+        const responsesWithIds = parsed.responses.map((item: any, idx: number) => ({
+          id: item.id || `groq-${Date.now()}-${idx}`,
+          text: item.text,
+          tag: item.tag || 'Suggested',
+          details: item.details || item.text,
+        }));
+        return { responses: responsesWithIds, providerUsed: 'groq', modelUsed: modelId };
       }
       throw new Error('Invalid response structure received from Groq.');
     } else {
@@ -258,52 +363,48 @@ export async function expandResponseDirectly(
   const isNegative = /\b(no|not|don't|dont|disagree|refuse|boundary|stop|unwell|frustrated|hate|never|neither|can't|cannot|won't|wont|bad|skip|pass)\b|नहीं|ना|मना|अस्वीकृति|असहमति|डिसअग्री|रिफ्यूजल/i.test(`${responseText} ${tag}`);
   const isQuestion = /\?|\b(what|how|why|when|where|who|which|could you|can you|repeat|clarify)\b|क्या|कहाँ|कब|कैसे|कौन|बताओ|पूछ|प्रश्न/i.test(`${responseText} ${tag}`);
 
-  let variationsGuideline = '';
-  if (isNegative) {
-    variationsGuideline = `CRITICAL INTENT CONSTRAINT: The base phrase is a NEGATIVE / REFUSAL / DISAGREEMENT response.
-ALL 6 generated option variations MUST BE NEGATIVE OR REFUSAL OR SET FIRM BOUNDARIES (do NOT generate positive affirmations):
-1. "Direct & Firm Refusal": Direct, unequivocal refusal stating clearly that you do not agree (20-30 words).
-2. "Polite & Respectful Decline": Courteous, soft refusal thanking them but firmly saying no (20-30 words).
-3. "Personal Boundary & Comfort": Stating personal comfort limits, discomfort, and boundary (20-30 words).
-4. "Firm Decisive Disagreement": Clear reasoning on why this option will not work for you (20-30 words).
-5. "Quiet Space & Stop Request": Asking politely to drop or pause the topic right now (20-30 words).
-6. "Alternative Preference": Saying no to this while proposing a completely different alternative (20-30 words).`;
-  } else if (isQuestion) {
-    variationsGuideline = `CRITICAL INTENT CONSTRAINT: The base phrase is a QUESTION / CLARIFICATION / INQUIRY response.
-ALL 6 generated option variations MUST BE QUESTIONS OR INQUIRIES matching this intent:
-1. "Detailed Inquiry": Asking for specific comprehensive details and context (20-30 words).
-2. "Collaborative Question": Asking for the other person's input, thoughts, and advice (20-30 words).
-3. "Contextual Clarification": Requesting clarification on timing, logistics, or specifics (20-30 words).
-4. "Polite Follow-up": Courteously asking them to elaborate or repeat key aspects (20-30 words).
-5. "Decision-Making Query": Asking what the best options and tradeoffs are (20-30 words).
-6. "Concise Summary Question": Asking for a quick high-level summary (15-25 words).`;
-  } else {
-    variationsGuideline = `CRITICAL INTENT CONSTRAINT: The base phrase is a POSITIVE / AFFIRMATIVE / AGREEMENT response.
-ALL 6 generated option variations MUST BE POSITIVE AFFIRMATIONS matching this intent (do NOT generate refusals):
-1. "Elaborate & Warm Affirmation": Deeply warm, appreciative sentence explaining why and adding positive context (20-30 words).
-2. "Enthusiastic Full Agreement": Highly energized, eager affirmation expressing full readiness (20-30 words).
-3. "Collaborative Plan & Agreement": Agreement paired with collaborative next steps (20-30 words).
-4. "Heartfelt Appreciation": Warmly thanking the person and confirming positive choice (20-30 words).
-5. "Direct Joyful Confirmation": Clear, confident affirmation with reassurance (20-30 words).
-6. "Peaceful & Reassured Choice": Confirming positive satisfaction with peace of mind (20-30 words).`;
-  }
+  const profileText = userProfile ? `
+Patient Name: ${userProfile.name || 'Alex'}
+Target Language: ${targetLanguage}
+Tone: ${userProfile.tone || 'Warm, natural'}
+${userProfile.communicationStyleSummary ? `Communication Style Profile: ${userProfile.communicationStyleSummary}` : ''}
+${userProfile.communicationStyleTraits && userProfile.communicationStyleTraits.length > 0 ? `Style Personality Traits: ${userProfile.communicationStyleTraits.join(', ')}` : ''}
+` : 'Patient: Alex, ALS patient with clear cognition.';
 
-  const expandPrompt = `You are an AAC response expansion engine for a speech-impaired user who needs full voice autonomy and deep expressiveness.
-Base phrase: "${responseText}" (Tag: ${tag || 'General'})
-Current conversation context: "${transcript || 'General conversation'}"
+  const expandPrompt = `You are the AAC response expansion engine for "Shadow Speak AI", empowering a person with ALS/speech impairment to communicate with speed, depth, and full autonomy.
+
+CONVERSATION CONTEXT (Question or incoming dialogue from listener):
+"${transcript || 'General conversation'}"
+
+TOP-LEVEL OPTION SELECTED BY USER:
+"${responseText}" (Tag / Intent: ${tag || 'Selected Option'})
+
+USER PROFILE & PREFERENCES:
+${profileText}
+
 ${languageInstruction}
 
-${variationsGuideline}
+CRITICAL TASK:
+The user selected the specific top-level response: "${responseText}" in response to the question: "${transcript}".
+Generate 4 distinct, rich, detailed, human-sounding expanded response variations that ALL specifically elaborate on this EXACT chosen option ("${responseText}") in direct reply to the incoming dialogue context ("${transcript}").
+
+STRICT INTENT & TOPIC PRESERVATION RULES:
+1. SAME INTENT & SPECIFIC TOPIC: Every single variation MUST strictly preserve the exact choice, stance, subject matter, and intent of the selected option ("${responseText}").
+   - If the selected option chooses a specific alternative (e.g. "I'd prefer pasta today" or "Pizza sounds great!"), ALL 4 variations must talk about that specific choice with rich context, reasons, or details.
+   - If the selected option is a refusal, disagreement, or boundary (e.g. "No, I don't feel like that"), ALL 4 variations MUST express refusal or disagreement with different styles (e.g. direct refusal, polite decline, personal boundary, alternative proposal).
+   - If the selected option is a question or inquiry (e.g. "What are you having?"), ALL 4 variations MUST ask relevant questions or request details on this exact topic.
+   - If the selected option is about fatigue or rest, ALL 4 variations MUST express that physical need or comfort adjustment.
+   - If the selected option is an agreement/affirmation, ALL 4 variations MUST elaborate on that agreement with warmth, enthusiasm, or logistical follow-up.
+2. RICH DETAILS: Each variation should be 12-25 words (in the target language script), complete, highly articulate, and expressive.
+3. DISTINCT LABELS: Provide a concise descriptive label (2-4 words) for each variation (e.g., "Elaborate & Warm", "Direct & Clear", "Polite & Respectful", "Collaborative Next Step").
 
 Return strictly valid JSON format:
 {
   "options": [
-    { "label": "Option Title 1", "text": "Rich detailed sentence matching the exact intent...", "tone": "${isNegative ? 'negative' : isQuestion ? 'question' : 'warm'}" },
-    { "label": "Option Title 2", "text": "Rich detailed sentence matching the exact intent...", "tone": "${isNegative ? 'negative' : isQuestion ? 'question' : 'warm'}" },
-    { "label": "Option Title 3", "text": "Rich detailed sentence matching the exact intent...", "tone": "${isNegative ? 'negative' : isQuestion ? 'question' : 'warm'}" },
-    { "label": "Option Title 4", "text": "Rich detailed sentence matching the exact intent...", "tone": "${isNegative ? 'negative' : isQuestion ? 'question' : 'warm'}" },
-    { "label": "Option Title 5", "text": "Rich detailed sentence matching the exact intent...", "tone": "${isNegative ? 'negative' : isQuestion ? 'question' : 'warm'}" },
-    { "label": "Option Title 6", "text": "Rich detailed sentence matching the exact intent...", "tone": "${isNegative ? 'negative' : isQuestion ? 'question' : 'warm'}" }
+    { "label": "Descriptive Label 1", "text": "Detailed sentence elaborating on the exact choice...", "tone": "${isNegative ? 'negative' : isQuestion ? 'question' : 'warm'}" },
+    { "label": "Descriptive Label 2", "text": "Detailed sentence elaborating on the exact choice...", "tone": "${isNegative ? 'negative' : isQuestion ? 'question' : 'warm'}" },
+    { "label": "Descriptive Label 3", "text": "Detailed sentence elaborating on the exact choice...", "tone": "${isNegative ? 'negative' : isQuestion ? 'question' : 'warm'}" },
+    { "label": "Descriptive Label 4", "text": "Detailed sentence elaborating on the exact choice...", "tone": "${isNegative ? 'negative' : isQuestion ? 'question' : 'warm'}" }
   ]
 }`;
 
@@ -314,28 +415,26 @@ Return strictly valid JSON format:
         throw new Error('Groq API Key is missing.');
       }
 
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${groqKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: modelId || 'llama-3.3-70b-versatile',
-          messages: [{ role: 'user', content: expandPrompt }],
-          response_format: { type: 'json_object' },
-          temperature: 0.7,
-        }),
-      });
+      const systemMsg = `You are the AAC response expansion engine for "Shadow Speak AI". You must respond with a valid JSON object matching this schema:
+{
+  "options": [
+    { "label": "Descriptive Label", "text": "Detailed sentence elaborating on choice...", "tone": "warm" }
+  ]
+}`;
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(`Groq API Error (${res.status}): ${errorText}`);
-      }
+      const userMsg = `${expandPrompt}\n\nIMPORTANT: Return ONLY a valid JSON object with the "options" array containing 4 detailed choices.`;
 
-      const data = await res.json();
-      const parsed = JSON.parse(cleanJsonString(data.choices?.[0]?.message?.content || '{}'));
-      if (parsed.options) {
+      const parsed = await callGroqWithAutoFallback(
+        groqKey,
+        modelId,
+        [
+          { role: 'system', content: systemMsg },
+          { role: 'user', content: userMsg },
+        ],
+        0.7
+      );
+
+      if (parsed.options && Array.isArray(parsed.options) && parsed.options.length > 0) {
         return { options: parsed.options };
       }
       throw new Error('Invalid options structure received from Groq.');
@@ -397,50 +496,98 @@ Return strictly valid JSON format:
       const contentStr = data.candidates?.[0]?.content?.parts?.[0]?.text;
       if (contentStr) {
         const parsed = JSON.parse(cleanJsonString(contentStr));
-        if (parsed.options) {
+        if (parsed.options && Array.isArray(parsed.options) && parsed.options.length > 0) {
           return { options: parsed.options };
         }
       }
       throw new Error('Invalid options structure received from Gemini.');
     }
   } catch (err: any) {
-    console.error('Direct AI expansion failed, using local rule-based fallback:', err);
+    console.error('Direct AI expansion failed, using local fallback:', err);
     return {
-      options: generateFallbackExpandedOptions(responseText, targetLanguage),
+      options: generateFallbackExpandedOptions(responseText, transcript, targetLanguage, tag),
     };
   }
 }
 
-function generateFallbackExpandedOptions(responseText: string = '', lang: string = 'English') {
+function generateFallbackExpandedOptions(responseText: string = '', transcript: string = '', lang: string = 'English', tag: string = '') {
+  const isNegative = /\b(no|not|don't|dont|disagree|refuse|boundary|stop|unwell|frustrated|hate|never|neither|can't|cannot|won't|wont|bad|skip|pass)\b|नहीं|ना|मना|अस्वीकृति|असहमति|डिसअग्री|रिफ्यूजल/i.test(`${responseText} ${tag}`);
+  const isQuestion = /\?|\b(what|how|why|when|where|who|which|could you|can you|repeat|clarify)\b|क्या|कहाँ|कब|कैसे|कौन|बताओ|पूछ|प्रश्न/i.test(`${responseText} ${tag}`);
+
+  if (isNegative) {
+    if (lang === 'Hindi') {
+      return [
+        { label: 'स्पष्ट अस्वीकृति (Direct Refusal)', text: `${responseText} मैं इससे बिल्कुल सहमत नहीं हूँ और ऐसा नहीं करना चाहूँगा।`, tone: 'negative' },
+        { label: 'विनम्र अस्वीकृति (Polite Decline)', text: `${responseText} पूछने के लिए धन्यवाद, परंतु मैं विनम्रतापूर्वक मना करता हूँ।`, tone: 'negative' },
+        { label: 'व्यक्तिगत सीमा (Personal Boundary)', text: `${responseText} मैं इसके साथ सहज महसूस नहीं कर रहा हूँ, कृपया इसे रहने दें।`, tone: 'negative' },
+        { label: 'दृढ़ निर्णय (Firm Choice)', text: `${responseText} यह विकल्प मेरे लिए सही नहीं है, कृपया इसे न करें।`, tone: 'negative' }
+      ];
+    }
+    if (lang === 'Hinglish') {
+      return [
+        { label: 'डायरेक्ट रिफ्यूजल (Direct Refusal)', text: `${responseText} मैं इसके साथ बिल्कुल कम्फर्टेबल नहीं हूँ और मना करता हूँ।`, tone: 'negative' },
+        { label: 'पोलाइट रिफ्यूजल (Polite Decline)', text: `${responseText} थैंक यू पूछने के लिए, पर मैं पोलाइटली मना करूँगा।`, tone: 'negative' },
+        { label: 'फर्म बाउंड्री (Firm Boundary)', text: `${responseText} यह मेरे लिए वर्क नहीं करेगा, सो प्लीज़ इसे यहीं ड्रॉप कर दो।`, tone: 'negative' },
+        { label: 'क्लियर डिसअग्री (Clear Disagreement)', text: `${responseText} मेरा बिल्कुल मूड नहीं है और मैं डिसअग्री करता हूँ।`, tone: 'negative' }
+      ];
+    }
+    return [
+      { label: 'Direct & Firm Refusal', text: `${responseText} I disagree with this option and strongly prefer we do not proceed.`, tone: 'negative' },
+      { label: 'Polite & Respectful Decline', text: `${responseText} Thank you for asking, but I respectfully decline this choice today.`, tone: 'negative' },
+      { label: 'Personal Boundary & Comfort', text: `${responseText} That really does not feel right or comfortable for me right now.`, tone: 'negative' },
+      { label: 'Firm Decisive Disagreement', text: `${responseText} That is not going to work for me and I am firm on my decision.`, tone: 'negative' }
+    ];
+  }
+
+  if (isQuestion) {
+    if (lang === 'Hindi') {
+      return [
+        { label: 'विस्तृत प्रश्न (Detailed Inquiry)', text: `${responseText} क्या आप इसके बारे में थोड़ा और विस्तार से समझा सकते हैं?`, tone: 'question' },
+        { label: 'सहयोगात्मक राय (Collaborative Input)', text: `${responseText} आपकी व्यक्तिगत पसंद या सलाह क्या है, मुझे भी बताएं।`, tone: 'question' },
+        { label: 'समय व योजना (Logistics Question)', text: `${responseText} इसमें कितना समय लगेगा और हमारी क्या योजना है?`, tone: 'question' },
+        { label: 'स्पष्टीकरण निवेदन (Clarification)', text: `${responseText} कृपया थोड़ा और स्पष्ट करें ताकि हम सही फैसला लें।`, tone: 'question' }
+      ];
+    }
+    if (lang === 'Hinglish') {
+      return [
+        { label: 'डिटेल्ड क्वेश्चन (Detailed Inquiry)', text: `${responseText} क्या तुम मुझे इसके बारे में थोड़ा और डिटेल्स बता सकते हो?`, tone: 'question' },
+        { label: 'कोलैबोरेटिव क्वेश्चन (Collaborative Input)', text: `${responseText} तुम्हारा क्या पर्सनल ओपिनियन है, मुझे भी बताओ।`, tone: 'question' },
+        { label: 'टाइम & प्लानिंग (Logistics)', text: `${responseText} इसमें कितना टाइम लगेगा और क्या प्लान है?`, tone: 'question' },
+        { label: 'क्लैरिफिकेशन (Clarification)', text: `${responseText} प्लीज़ थोड़ा और डिटेल में बताओ ताकि सब क्लियर हो जाए।`, tone: 'question' }
+      ];
+    }
+    return [
+      { label: 'Detailed Inquiry', text: `${responseText} Could you share a few more details so we can discuss it thoroughly?`, tone: 'question' },
+      { label: 'Collaborative Question', text: `${responseText} I would love to hear your thoughts and recommendation on this as well.`, tone: 'question' },
+      { label: 'Timing & Logistics', text: `${responseText} What is the timeline and what are the exact steps we would take?`, tone: 'question' },
+      { label: 'Contextual Clarification', text: `${responseText} Please give me a little more context so we make the best decision.`, tone: 'question' }
+    ];
+  }
+
+  // General / Affirmative / Alternative / Preference
   if (lang === 'Hindi') {
     return [
-      { label: 'विस्तृत एवं सौम्य (Warm Context)', text: `${responseText} मुझे लगता है कि यह बहुत अच्छा विकल्प रहेगा और हम सब मिलकर इसका आनंद ले सकते हैं।`, tone: 'warm' },
-      { label: 'स्पष्ट असहमति / अस्वीकृति (Negative Refusal)', text: `नहीं, मैं इस बात से बिल्कुल सहमत नहीं हूँ। मुझे यह विचार पसंद नहीं आया और मैं ऐसा नहीं करना चाहूँगा।`, tone: 'negative' },
-      { label: 'विनम्र एवं औपचारिक (Polite Alternative)', text: `धन्यवाद मुझे बताने के लिए, परंतु मैं इस समय किसी अन्य विकल्प को प्राथमिकता देना चाहूँगा।`, tone: 'polite' },
-      { label: 'आगे की चर्चा / प्रश्न (Follow-up Question)', text: `${responseText} क्या आप इसके बारे में थोड़ा और विस्तार से समझा सकते हैं ताकि हम तय कर सकें?`, tone: 'question' },
-      { label: 'शारीरिक स्थिति एवं आराम (Energy & Comfort Context)', text: `${responseText} मेरी ऊर्जा अभी थोड़ी कम है, इसलिए मुझे थोड़ा विश्राम और शांति चाहिए।`, tone: 'standard' },
-      { label: 'तत्काल प्राथमिकता (Urgent Action)', text: `कृपया इस पर तुरंत ध्यान दें, यह मेरे लिए बहुत महत्वपूर्ण और आवश्यक है।`, tone: 'standard' },
+      { label: 'विस्तृत एवं सौम्य (Detailed & Warm)', text: `${responseText} मुझे लगता है कि यह बहुत अच्छा विकल्प रहेगा और हम सब इसका आनंद ले सकते हैं।`, tone: 'warm' },
+      { label: 'उत्साही सहमति (Enthusiastic)', text: `${responseText} यह विचार मुझे बहुत पसंद आया और मैं इसके लिए पूरी तरह तैयार हूँ।`, tone: 'warm' },
+      { label: 'सहयोगात्मक योजना (Collaborative)', text: `${responseText} चलिए इसी योजना पर आगे बढ़ते हैं, यही सबसे उत्तम समाधान है।`, tone: 'warm' },
+      { label: 'आभार व पुष्टि (Grateful Confirmation)', text: `${responseText} पूछने और मेरा ध्यान रखने के लिए आपका बहुत-बहुत धन्यवाद।`, tone: 'warm' }
     ];
   }
 
   if (lang === 'Hinglish') {
     return [
-      { label: 'इलाबोरेट & वार्म (Warm Context)', text: `${responseText} आई थिंक यह आईडिया एकदम बेस्ट रहेगा और हम सब एन्जॉय करेंगे।`, tone: 'warm' },
-      { label: 'स्पष्ट असहमति / रिफ्यूजल (Negative Refusal)', text: `नो, मैं इसके साथ बिल्कुल कम्फर्टेबल नहीं हूँ। मुझे यह आईडिया पसंद नहीं आया और मैं मना करता हूँ।`, tone: 'negative' },
-      { label: 'पोलाइट & फॉर्मल (Polite Alternative)', text: `थैंक यू सो मच बताने के लिए, पर मैं प्रेफर करूँगा कि हम कोई दूसरा ऑप्शन ट्राय करें।`, tone: 'polite' },
-      { label: 'फॉलो-अप क्वेश्चन (Follow-up Question)', text: `${responseText} क्या तुम मुझे इसके बारे में थोड़ा और डिटेल्स बता सकते हो ताकि हम साथ मिलकर फैसला लें?`, tone: 'question' },
-      { label: 'एनर्जी & REST कांटेक्स्ट (Energy & Rest Context)', text: `${responseText} मेरी ऊर्जा अभी थोड़ी कम है, सो मुझे थोड़ा आराम करने की ज़रूरत है।`, tone: 'standard' },
-      { label: 'अर्जेंट प्रायोरिटी (Urgent Action)', text: `प्लीज़ इस पर तुरंत ध्यान दो, यह मेरे लिए बहुत इम्पोर्टेन्ट है।`, tone: 'standard' },
+      { label: 'इलाबोरेट & वार्म (Detailed & Warm)', text: `${responseText} आई थिंक यह आईडिया एकदम बेस्ट रहेगा और हम सब एन्जॉय करेंगे।`, tone: 'warm' },
+      { label: 'फुल अग्रीमेंट (Enthusiastic)', text: `${responseText} यह एकदम परफेक्ट प्लान है और मैं इसके लिए 100% रेडी हूँ!`, tone: 'warm' },
+      { label: 'कोलैबोरेटिव अग्री (Collaborative)', text: `${responseText} चलो इसी के साथ आगे बढ़ते हैं, यह हमारे लिए सबसे बेस्ट ऑप्शन है।`, tone: 'warm' },
+      { label: 'वार्म अप्रिशिएशन (Grateful Confirmation)', text: `${responseText} थैंक यू सो मच मुझसे पूछने और केयर करने के लिए।`, tone: 'warm' }
     ];
   }
 
   return [
-    { label: 'Elaborate & Warm (Warm Context)', text: `${responseText} I feel this is the best path forward, and I really appreciate you including me in this decision.`, tone: 'warm' },
-    { label: 'Firm Boundary & Disagreement (Negative Refusal)', text: `No, I disagree and I am not comfortable with this. I'd strongly prefer we do not proceed with this option.`, tone: 'negative' },
-    { label: 'Polite & Formal Alternative', text: `Thank you for suggesting that, but I respectfully prefer an alternative option at this moment.`, tone: 'polite' },
-    { label: 'Conversational Follow-up Question', text: `${responseText} Could you share a few more details so we can discuss it thoroughly together?`, tone: 'question' },
-    { label: 'Physical & Energy State Explanation', text: `${responseText} My energy is a bit low right now, so I need to rest and take things gently.`, tone: 'standard' },
-    { label: 'Urgent & Priority Request', text: `Please attend to this as soon as possible, as it is very important and urgent for me.`, tone: 'standard' },
+    { label: 'Elaborate & Warm', text: `${responseText} I feel this is the best path forward, and I really appreciate you checking with me.`, tone: 'warm' },
+    { label: 'Enthusiastic Confirmation', text: `${responseText} That sounds wonderful and I am completely on board with that choice.`, tone: 'warm' },
+    { label: 'Collaborative Action', text: `${responseText} Let's go ahead with that right away—I think it will work out great.`, tone: 'warm' },
+    { label: 'Thoughtful Nuance', text: `${responseText} That fits my preferences and gives me great comfort right now.`, tone: 'warm' }
   ];
 }
 
