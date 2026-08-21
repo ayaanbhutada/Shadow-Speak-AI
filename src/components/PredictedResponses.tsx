@@ -470,7 +470,7 @@ export const PredictedResponses: React.FC<PredictedResponsesProps> = ({
         </div>
       ) : responses.length === 0 ? (
         <div className="py-6 text-center text-slate-500 bg-slate-950/50 rounded-xl border border-slate-800 text-sm">
-          No responses predicted yet. Click "Regenerate Predictions" above.
+          No responses generated yet. Click "Generate Responses" above.
         </div>
       ) : (
         <div className="space-y-2.5">

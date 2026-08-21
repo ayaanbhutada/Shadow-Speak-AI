@@ -27,6 +27,7 @@ interface TranscriptSectionProps {
   timestamp: string;
   isListening: boolean;
   onUpdateTranscript: (newText: string, speakerName?: string) => void;
+  onClearTranscript: () => void;
   onRequestPredictions: () => void;
   isLoadingPredictions: boolean;
   onResetMic?: () => void;
@@ -44,6 +45,7 @@ export const TranscriptSection: React.FC<TranscriptSectionProps> = ({
   timestamp,
   isListening,
   onUpdateTranscript,
+  onClearTranscript,
   onRequestPredictions,
   isLoadingPredictions,
   onResetMic,
@@ -141,6 +143,17 @@ export const TranscriptSection: React.FC<TranscriptSectionProps> = ({
           >
             {isEditing ? 'Cancel Edit' : 'Edit / Input Prompt'}
           </button>
+          {transcript && (
+            <button
+              onClick={onClearTranscript}
+              id="clear-transcript-btn"
+              className="p-1.5 rounded-md text-slate-400 hover:text-red-300 hover:bg-red-950/50 transition-colors"
+              title="Clear transcript"
+              aria-label="Clear transcript"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {!isEditing ? (
@@ -228,15 +241,15 @@ export const TranscriptSection: React.FC<TranscriptSectionProps> = ({
           )}
         </div>
 
-        {/* Regenerate AI Suggestions Button */}
+        {/* Manual AI response generation */}
         <button
           onClick={onRequestPredictions}
           disabled={isLoadingPredictions}
           id="regenerate-predictions-btn"
-          className="text-xs bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
+          className="text-sm sm:text-base bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold px-5 py-3 rounded-xl flex items-center gap-2 shadow-md transition-all disabled:opacity-50"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${isLoadingPredictions ? 'animate-spin' : ''}`} />
-          <span>{isLoadingPredictions ? 'Predicting...' : 'Regenerate Predictions'}</span>
+          <RefreshCw className={`w-5 h-5 ${isLoadingPredictions ? 'animate-spin' : ''}`} />
+          <span>{isLoadingPredictions ? 'Generating...' : 'Generate Responses'}</span>
         </button>
       </div>
 

@@ -142,7 +142,7 @@ export default function App() {
   });
 
   // ASR & Conversation State
-  const [isListening, setIsListening] = useState<boolean>(true);
+  const [isListening, setIsListening] = useState<boolean>(false);
   const [interimTranscript, setInterimTranscript] = useState<string>('');
   const [isAudioActive, setIsAudioActive] = useState<boolean>(false);
   const [asrStatusMessage, setAsrStatusMessage] = useState<string>('');
@@ -158,7 +158,6 @@ export default function App() {
 
   const speechDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const audioActiveTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const fetchAIPredictionsRef = useRef<(text: string, speakerName?: string) => Promise<void>>(async () => {});
 
   // AI Predicted Responses dynamically initialized to user profile language
   const [responses, setResponses] = useState<PredictedResponse[]>(() =>
@@ -416,11 +415,6 @@ export default function App() {
     [userProfile, speaker, aiModelConfig, conversationHistory]
   );
 
-  // Keep ref up to date to prevent closure staleness in ASR callbacks
-  useEffect(() => {
-    fetchAIPredictionsRef.current = fetchAIPredictions;
-  }, [fetchAIPredictions]);
-
   // Sync recognition language whenever active user profile changes
   useEffect(() => {
     SpeechRecognitionService.updateLanguage(userProfile.language || 'English');
@@ -452,13 +446,6 @@ export default function App() {
       setTimestamp('Just now');
       handleAddHistoryEntry(finalText, 'Ambient Speaker', false);
 
-      // Debounce AI prediction by 2000ms (2 seconds) so speaker can finish their full sentence/thought naturally before calling Gemini or Groq API
-      if (speechDebounceTimerRef.current) {
-        clearTimeout(speechDebounceTimerRef.current);
-      }
-      speechDebounceTimerRef.current = setTimeout(() => {
-        fetchAIPredictionsRef.current(finalText, 'Ambient Speaker');
-      }, 2000);
     };
 
     const handleStatusChange = (active: boolean, errorMsg?: string) => {
@@ -538,7 +525,17 @@ export default function App() {
     setSpeaker(spk);
     setTimestamp('Just now');
     handleAddHistoryEntry(newText, spk, false);
-    fetchAIPredictions(newText, spk);
+  };
+
+  const handleClearTranscript = () => {
+    if (speechDebounceTimerRef.current) {
+      clearTimeout(speechDebounceTimerRef.current);
+    }
+    setTranscript('');
+    setInterimTranscript('');
+    setReadyText('');
+    setSelectedResponseId(null);
+    setResponses([]);
   };
 
   // Handle option selection
@@ -631,9 +628,6 @@ export default function App() {
       return [...prev, updatedProf];
     });
 
-    if (currentView === 'dashboard') {
-      fetchAIPredictions(transcript, speaker);
-    }
   };
 
   const isElevenLabsActive =
@@ -705,6 +699,7 @@ export default function App() {
           timestamp={timestamp}
           isListening={isListening}
           onUpdateTranscript={handleUpdateTranscript}
+          onClearTranscript={handleClearTranscript}
           onRequestPredictions={() => fetchAIPredictions(transcript, speaker)}
           isLoadingPredictions={isLoadingPredictions}
           onResetMic={handleResetMic}
